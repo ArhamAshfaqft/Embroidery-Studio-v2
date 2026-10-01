@@ -14,7 +14,7 @@ const started=performance.now(); const after=renderStitch(source,opts); const el
 const before=previous(source,opts);
 const sheet=document.createElement('canvas'); sheet.width=1600; sheet.height=730;
 const s=sheet.getContext('2d'); s.fillStyle='#f1ede5'; s.fillRect(0,0,1600,730);
-s.fillStyle='#242824'; s.font='28px Arial'; s.fillText('Previous satin',40,48); s.fillText('Continuous surface satin',840,48);
+s.fillStyle='#242824'; s.font='28px Arial'; s.fillText('Previous satin',40,48); s.fillText('Twisted-fibre satin',840,48);
 s.drawImage(before,0,70,800,625); s.drawImage(after,800,70,800,625);
 document.body.append(sheet);
 const equal=(a,b)=>a.toDataURL()===b.toDataURL();
@@ -27,5 +27,21 @@ check(after.getContext('2d').getImageData(0,0,1,1).data[3]===0,'Transparency los
 const ring=document.createElement('canvas'); ring.width=120;ring.height=120;
 const r=ring.getContext('2d');r.fillStyle='#448866';r.fillRect(10,10,100,100);r.clearRect(40,40,40,40);
 const ringOut=renderStitch(ring,opts);check(ringOut.getContext('2d').getImageData(120,120,1,1).data[3]===0,'Hole filled');
-window.result={image:sheet.toDataURL().split(',')[1],sample:after.toDataURL().split(',')[1],elapsed,checks:6};
+const red=document.createElement('canvas'); red.width=600;red.height=240;
+const rc=red.getContext('2d');rc.fillStyle='#b91c1c';rc.font='bold 155px Arial';rc.fillText('DESIGN',8,177);
+const redOut=renderStitch(red,opts);
+const detail=document.createElement('canvas');detail.width=1500;detail.height=850;
+const dc=detail.getContext('2d');dc.fillStyle='#eeeae2';dc.fillRect(0,0,1500,850);
+dc.fillStyle='#242824';dc.font='26px Arial';dc.fillText('Horizontal strands with visible fibre twist · enlarged render',35,45);
+dc.drawImage(redOut,15,65,1450,580);
+dc.drawImage(after,135,180,210,75,35,660,420,150);
+dc.fillStyle='#555';dc.font='20px Arial';dc.fillText('Leaf thread detail',700,750);
+const diagonalStart=performance.now();renderStitch(source,{...opts,angle:45});const diagonalMs=performance.now()-diagonalStart;
+const boundary=document.createElement('canvas');boundary.width=120;boundary.height=60;
+const bc=boundary.getContext('2d');bc.fillStyle='#ff0000';bc.fillRect(0,0,60,60);bc.fillStyle='#0000ff';bc.fillRect(60,0,60,60);
+const result=renderStitch(boundary,opts).getContext('2d');
+const left=result.getImageData(110,50,1,1).data,right=result.getImageData(130,50,1,1).data;
+check(left[0]>left[2] && right[2]>right[0],'Colour boundary crossed');
+window.result={image:sheet.toDataURL().split(',')[1],sample:after.toDataURL().split(',')[1],detail:detail.toDataURL().split(',')[1],elapsed,diagonalMs,checks:7};
 </script></body></html>
+

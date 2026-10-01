@@ -1,103 +1,106 @@
 import type { StitchSettings } from '../types';
 
-/** Continuous surface-satin strands. Each row is intersected with the artwork;
- * holes and colour boundaries end a strand rather than receiving a texture.
- * A single, coherent row coordinate avoids the seams caused by substituting a
- * different angle at every pixel in a periodic shader. These are preview paths.
- */
+/** Edge-to-edge horizontal (or user-directed) floss with a cylindrical,
+ * twisted multi-ply surface. Material coordinates belong to each whole strand,
+ * so changing illumination never breaks it into short disconnected stitches. */
 export function renderSatin(source: ImageData, settings: StitchSettings): HTMLCanvasElement {
   const { width: w, height: h, data } = source;
-  const canvas = document.createElement('canvas');
-  canvas.width = w; canvas.height = h;
+  const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
   const ctx = canvas.getContext('2d')!;
-  const mask = document.createElement('canvas');
-  mask.width = w; mask.height = h;
-  mask.getContext('2d')!.putImageData(source, 0, 0);
-  ctx.drawImage(mask, 0, 0);
-  ctx.globalCompositeOperation = 'source-atop';
-  ctx.fillStyle = 'rgba(0,0,0,0.24)';
-  ctx.fillRect(0, 0, w, h);
-  ctx.globalCompositeOperation = 'source-over';
-
+  const out = ctx.createImageData(w, h), pixels = out.data;
+  for (let i = 0; i < data.length; i += 4) {
+    pixels[i] = data[i] * 0.76; pixels[i + 1] = data[i + 1] * 0.76;
+    pixels[i + 2] = data[i + 2] * 0.76; pixels[i + 3] = data[i + 3];
+  }
   const angle = settings.angle * Math.PI / 180;
-  const tx = Math.cos(angle), ty = Math.sin(angle);
-  const nx = -ty, ny = tx;
-  const thickness = 1.25 + settings.thickness * 0.28;
-  const gap = thickness * (1.28 - settings.density * 0.047);
-  const shine = settings.sheen / 100;
-  const radius = Math.hypot(w, h) / 2;
-  const noise = (n: number) => {
-    const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
-    return x - Math.floor(x);
-  };
+  const tx = Math.cos(angle), ty = Math.sin(angle), nx = -ty, ny = tx;
+  // Enough pixels per bundle for the twist to survive the fitted preview.
+  const thickness = 3.0 + settings.thickness * 0.65;
+  const gap = thickness * (1.18 - settings.density * 0.042);
+  const shine = settings.sheen / 100, radius = Math.hypot(w, h) / 2;
+  const noise = (n: number) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
   const at = (u: number, v: number) => {
-    const x = Math.floor(w / 2 + u * tx + v * nx);
-    const y = Math.floor(h / 2 + u * ty + v * ny);
+    const x = Math.floor(w / 2 + u * tx + v * nx), y = Math.floor(h / 2 + u * ty + v * ny);
     if (x < 0 || y < 0 || x >= w || y >= h) return -1;
-    const i = (y * w + x) * 4;
-    return data[i + 3] > 32 ? i : -1;
+    const i = (y * w + x) * 4; return data[i + 3] > 32 ? i : -1;
   };
   const different = (a: number, b: number) =>
     (data[a] - data[b]) ** 2 + (data[a + 1] - data[b + 1]) ** 2 + (data[a + 2] - data[b + 2]) ** 2 > 2500;
 
   let row = 0;
   for (let v = -radius; v <= radius; v += gap, row++) {
-    const vv = v + (noise(row) - 0.5) * gap * 0.15;
+    const vv = v + (noise(row) - 0.5) * gap * 0.22;
     let start = 0, first = -1;
     const strand = (end: number) => {
       if (first < 0 || end - start < 0.65) return;
-      const mid = at((start + end) / 2, vv);
-      const color = mid < 0 ? first : mid;
-      const width = thickness * (0.94 + noise(row + 81) * 0.12);
       const length = end - start;
-      const x = w / 2 + start * tx + vv * nx;
-      const y = h / 2 + start * ty + vv * ny;
-      ctx.save(); ctx.translate(x, y); ctx.rotate(angle);
-      const tint = (factor: number, lift = 0) =>
-        `rgb(${Math.min(255, data[color] * factor + lift)},${Math.min(255, data[color + 1] * factor + lift)},${Math.min(255, data[color + 2] * factor + lift)})`;
-      const gradient = ctx.createLinearGradient(0, -width / 2, 0, width / 2);
-      gradient.addColorStop(0, tint(0.58));
-      gradient.addColorStop(0.22, tint(0.95));
-      gradient.addColorStop(0.43, tint(1.04, 8 + shine * 24));
-      gradient.addColorStop(0.68, tint(0.98, shine * 8));
-      gradient.addColorStop(1, tint(0.60));
-      // Keep strand centrelines straight; fine fibres supply the natural texture.
-      const bow = 0;
-      ctx.beginPath(); ctx.moveTo(0, 0);
-      ctx.bezierCurveTo(length / 3, bow, length * 2 / 3, bow, length, 0);
-      ctx.lineCap = 'round'; ctx.lineWidth = width;
-      ctx.strokeStyle = gradient; ctx.stroke();
-      const seating = ctx.createLinearGradient(0, 0, length, 0);
-      seating.addColorStop(0, 'rgba(0,0,0,0.24)');
-      seating.addColorStop(0.10, 'rgba(0,0,0,0)');
-      seating.addColorStop(0.48, `rgba(255,255,238,${0.04 + shine * 0.09})`);
-      seating.addColorStop(0.9, 'rgba(0,0,0,0)');
-      seating.addColorStop(1, 'rgba(0,0,0,0.24)');
-      ctx.strokeStyle = seating; ctx.stroke();
-      // Helical fibre glints travel along the same strand, with restrained contrast.
-      for (let ply = 0; ply < 3; ply++) {
-        ctx.beginPath();
-        for (let u = 0; u <= length; u += 0.8) {
-          const t = u / length;
-          const bend = 3 * t * (1 - t) * bow;
-          const fy = bend + Math.sin(u * 0.55 + ply * Math.PI * 2 / 3 + noise(row) * 6) * width * 0.28;
-          if (u === 0) ctx.moveTo(u, fy); else ctx.lineTo(u, fy);
+      const width = thickness * (0.88 + noise(row + 81) * 0.24);
+      const phase = noise(row + 7) * Math.PI * 2;
+      const pitch = width * (2.5 + noise(row + 13) * 0.7);
+      const tint = 0.95 + noise(row + 121) * 0.10;
+      const sx = w / 2 + start * tx + vv * nx, sy = h / 2 + start * ty + vv * ny;
+      const ex = sx + length * tx, ey = sy + length * ty;
+      const margin = width * 0.65 + 1;
+      const minX = Math.max(0, Math.floor(Math.min(sx, ex) - margin));
+      const maxX = Math.min(w - 1, Math.ceil(Math.max(sx, ex) + margin));
+      const minY = Math.max(0, Math.floor(Math.min(sy, ey) - margin));
+      const maxY = Math.min(h - 1, Math.ceil(Math.max(sy, ey) + margin));
+      for (let y = minY; y <= maxY; y++) {
+        // Intersect a scanline with the narrow oriented strand, avoiding the
+        // quadratic bounding-box cost for long diagonal stitches.
+        let left = minX, right = maxX;
+        const clip = (a: number, b: number, low: number, high: number) => {
+          if (Math.abs(a) < 1e-8) { if (b < low || b > high) right = left - 1; return; }
+          const p = (low - b) / a, q = (high - b) / a;
+          left = Math.max(left, Math.ceil(Math.min(p, q)));
+          right = Math.min(right, Math.floor(Math.max(p, q)));
+        };
+        clip(tx, (0.5 - sx) * tx + (y + 0.5 - sy) * ty, 0, length);
+        clip(nx, (0.5 - sx) * nx + (y + 0.5 - sy) * ny, -margin, margin);
+        for (let x = left; x <= right; x++) {
+        const i = (y * w + x) * 4;
+        if (data[i + 3] < 1) continue;
+        const dx = x + 0.5 - sx, dy = y + 0.5 - sy;
+        const u = dx * tx + dy * ty;
+        if (u < 0 || u > length || different(first, i)) continue;
+        // Straight overall rows, but soft surface variation prevents ruler-like grooves.
+        const wander = Math.sin(u * 0.033 + phase) * width * 0.045;
+        const localWidth = width * (1 + 0.055 * Math.sin(u * 0.08 + phase));
+        const cross = dx * nx + dy * ny - wander;
+        const q = cross / (localWidth * 0.5);
+        const coverage = Math.min(1, Math.max(0, (localWidth * 0.5 - Math.abs(cross)) + 0.5));
+        if (coverage === 0) continue;
+        const clamped = Math.max(-0.999, Math.min(0.999, q));
+        const crown = Math.sqrt(1 - clamped * clamped);
+        // Three plies wind around the bundle. Their diagonal ridges, rather than
+        // a continuous white stripe, carry the highlight along the thread.
+        const helix = u / pitch * Math.PI * 2 - Math.asin(clamped) * 3 + phase;
+        const ply = Math.cos(helix);
+        const ridge = Math.pow(Math.max(0, ply), 2);
+        const valley = Math.pow(Math.max(0, -ply), 6);
+        const filament = Math.sin(helix * 5 + u * 0.19) * 0.028
+          + Math.sin(helix * 9 - u * 0.07) * 0.014;
+        const softLight = 0.66 + 0.34 * crown - clamped * 0.045;
+        const twist = 1 + ridge * 0.12 - valley * 0.14 + filament;
+        const endDistance = Math.min(u, length - u);
+        const insertion = 1 - 0.22 * Math.exp(-endDistance / 1.8);
+        const body = 0.96 + 0.055 * Math.sin(Math.PI * u / length);
+        const lit = softLight * twist * tint * insertion * body;
+        const glint = (5 + shine * 25) * ridge * Math.pow(crown, 0.7) * insertion;
+        for (let channel = 0; channel < 3; channel++) {
+          const value = Math.min(255, data[i + channel] * lit + glint);
+          pixels[i + channel] = pixels[i + channel] * (1 - coverage) + value * coverage;
         }
-        ctx.lineWidth = 0.30;
-        ctx.strokeStyle = `rgba(255,255,240,${0.10 + shine * 0.12})`; ctx.stroke();
       }
-      ctx.restore();
+      }
     };
     for (let u = -radius; u <= radius + 0.5; u += 0.5) {
       const i = at(u, vv);
-      if (i < 0 || (first >= 0 && different(first, i))) {
-        strand(u - 0.25); first = -1;
-      }
+      if (i < 0 || (first >= 0 && different(first, i))) { strand(u - 0.25); first = -1; }
       if (i >= 0 && first < 0) { start = u; first = i; }
     }
   }
-  ctx.globalCompositeOperation = 'destination-in';
-  ctx.drawImage(mask, 0, 0);
-  ctx.globalCompositeOperation = 'source-over';
+  ctx.putImageData(out, 0, 0);
   return canvas;
 }
+

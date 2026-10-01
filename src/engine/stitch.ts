@@ -222,8 +222,9 @@ export function renderStitch(
   // Tatami: airy woven rows with brick stagger · Satin: tight glossy columns
   const tatamiGap = Math.max(2.0, Math.min(9.0, (5.4 * thickF) / denseF));
   const tatamiSeg = Math.max(5, 13 * thickF);
-  const satinGap = Math.max(1.4, Math.min(5.2, (3.1 * thickF) / denseF));
-  const satinSeg = Math.max(16, 30 * thickF);
+  const satinGap = Math.max(1.2, Math.min(5.2, (2.8 * thickF) / denseF));
+  // Long unbroken strands: segmentation far apart so threads read edge-to-edge
+  const satinSeg = Math.max(48, 90 * thickF);
 
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -241,37 +242,47 @@ export function renderStitch(
       let nx = 0, ny = 0, nz = 1, ao = 1;
       // Per-pixel thread direction (satin may follow the shape; tatami stays global)
       let tX = cosA, tY = sinA;
+      // Fibre groove strength + sheen width (satin gets visible filaments + soft highlights)
+      let fibreAmp = 0.05, fibreFine = 0;
+      let sheenPow = 10;
 
       if (isSatin) {
         if (needFlow) {
           // Shape-following satin: blend the global angle toward the local
-          // outline direction. Border bands follow the outline fully.
+          // outline direction. Border bands follow the outline fully —
+          // except in pure Satin mode, which stays uniform (no outline seam).
           const f = sampleFlow(x, y);
           let ax = f[0], ay = f[1];
           if (ax * cosA + ay * sinA < 0) { ax = -ax; ay = -ay; }
-          const k = inBorderBand ? 1 : Math.min(1, f[2]) * 0.9;
+          const k = (inBorderBand && s.type !== 'satin') ? 1 : Math.min(1, f[2]) * 0.9;
           const bx = cosA * (1 - k) + ax * k;
           const by = sinA * (1 - k) + ay * k;
           const bl = Math.sqrt(bx * bx + by * by) || 1;
           tX = bx / bl; tY = by / bl;
         }
+        fibreAmp = 0.1; fibreFine = 0.035;
+        sheenPow = 6.5;
         // Satin columns run ALONG the (possibly shape-following) thread direction
         const perpX = -tY, perpY = tX;
         const row = x * perpX + y * perpY;
         const gap = satinGap;
-        const mod = ((row % gap) + gap) % gap;
+        // Slight natural variation in spacing per thread (deterministic)
+        const rowIndex = Math.floor(row / gap);
+        const h1 = Math.abs(Math.sin(rowIndex * 12.9898) * 43758.5453) % 1;
+        const mod = (((row + (h1 - 0.5) * gap * 0.35) % gap) + gap) % gap;
         const t = (mod / gap) * 2 - 1;
-        const crown = Math.sqrt(Math.max(0, 1 - t * t));
+        // Rounded raised strand, slight thickness variation per thread
+        const crown = Math.sqrt(Math.max(0, 1 - t * t)) * (0.94 + h1 * 0.12);
         nx = t * perpX * 0.9;
         ny = t * perpY * 0.9;
         nz = Math.max(0.3, crown * (0.9 + sheenF * 0.7));
         const crevice = Math.pow(Math.abs(t), 2.6) * (0.28 + sheenF * 0.1);
         ao = Math.max(0.45, 1 - crevice);
-        // subtle lengthwise needle valleys
+        // faint needle dips only — strands stay visually continuous edge to edge
         const along = x * tX + y * tY;
         const segM = ((along % satinSeg) + satinSeg) % satinSeg;
         const segT = (segM / satinSeg) * 2 - 1;
-        ao *= 1 - Math.pow(Math.abs(segT), 6) * 0.18;
+        ao *= 1 - Math.pow(Math.abs(segT), 6) * 0.07;
       } else {
         // Tatami brick weave: staggered rows
         const perpX = -sinA, perpY = cosA;
@@ -293,8 +304,9 @@ export function renderStitch(
         ao = Math.max(0.4, 1 - crevice);
       }
 
-      // Twist fibre ripple (follows local thread direction)
-      const fibre = Math.sin((x * tX + y * tY) * 1.4) * 0.05;
+      // Twist fibre ripple (follows local thread direction; satin adds fine filaments)
+      const fph = (x * tX + y * tY) * 1.4;
+      const fibre = Math.sin(fph) * fibreAmp + Math.sin(fph * 5.3 + 1.2) * fibreFine;
       nx += fibre * -tY; ny += fibre * tX;
 
       // Raised edge bevel
@@ -306,9 +318,9 @@ export function renderStitch(
 
       const nDotL = Math.max(0, nx * lx + ny * ly + nz * lz);
       const diffuse = 0.52 + 0.48 * nDotL;
-      // Anisotropic sheen along local thread direction
+      // Anisotropic sheen along local thread direction (satin: softer, broader)
       const tDotL = tX * lx + tY * ly;
-      const sheen = Math.pow(Math.max(0, Math.sqrt(Math.max(0, 1 - tDotL * tDotL))), 10) * (0.15 + sheenF * 0.85);
+      const sheen = Math.pow(Math.max(0, Math.sqrt(Math.max(0, 1 - tDotL * tDotL))), sheenPow) * (0.15 + sheenF * 0.85);
       const lit = diffuse * (1 + sheen * 0.55) * ao;
 
       op[idx] = Math.min(255, r * lit + sheen * sheenF * 22);

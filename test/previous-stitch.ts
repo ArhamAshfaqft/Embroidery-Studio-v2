@@ -1,5 +1,4 @@
-import type { StitchSettings } from '../types';
-import { renderSatin } from './satin';
+import type { StitchSettings } from '../src/types';
 
 /**
  * SimpleStitch — a small, focused embroidery renderer.
@@ -120,9 +119,6 @@ export function renderStitch(
   if (!hasInk) return src;
 
   const painted = quantize(px, w, h, s.maxColors);
-  if (s.type === 'satin') {
-    return renderSatin(new ImageData(new Uint8ClampedArray(painted), w, h), s);
-  }
   const dist = edgeDistance(px, w, h);
 
   const useBorder = s.border && s.borderWidth > 0;
@@ -239,7 +235,7 @@ export function renderStitch(
 
       // Border band is a satin edge in EVERY mode — the toggle always does something
       const inBorderBand = useBorder && d <= borderPx;
-      const isSatin = inBorderBand;
+      const isSatin = s.type === 'satin' || inBorderBand;
 
       let r = painted[idx], g = painted[idx + 1], b = painted[idx + 2];
 
@@ -258,7 +254,7 @@ export function renderStitch(
           const f = sampleFlow(x, y);
           let ax = f[0], ay = f[1];
           if (ax * cosA + ay * sinA < 0) { ax = -ax; ay = -ay; }
-          const k = inBorderBand ? 1 : Math.min(1, f[2]) * 0.9;
+          const k = (inBorderBand && s.type !== 'satin') ? 1 : Math.min(1, f[2]) * 0.9;
           const bx = cosA * (1 - k) + ax * k;
           const by = sinA * (1 - k) + ay * k;
           const bl = Math.sqrt(bx * bx + by * by) || 1;
@@ -347,3 +343,4 @@ export function renderStitch(
   fctx.drawImage(out, 0, 0);
   return fin;
 }
+

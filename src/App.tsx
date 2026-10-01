@@ -518,7 +518,7 @@ export default function App() {
               <div className="text-[13px] font-bold mb-2">1 · Stitch style</div>
               <div className="space-y-1.5">
                 {STITCH_CARDS.map(c => (
-                  <button key={c.id} onClick={() => set({ type: c.id })}
+                  <button key={c.id} onClick={() => set(c.id === 'satin' ? { type: c.id, angle: 0 } : { type: c.id })}
                     className={`w-full text-left rounded-xl border-2 px-3 py-2.5 transition-all ${stitch.type === c.id ? 'border-stone-900 bg-stone-900 text-white shadow' : 'border-stone-200 hover:border-stone-400'}`}>
                     <div className="text-[13px] font-bold">{c.name}</div>
                     <div className={`text-[11px] ${stitch.type === c.id ? 'text-stone-300' : 'text-stone-500'}`}>{c.desc}</div>
@@ -534,11 +534,11 @@ export default function App() {
               <Slider label="Thread shine" value={stitch.sheen} min={0} max={100} unit="%" onChange={v => set({ sheen: v })} />
             </div>
             <div className="rounded-xl bg-stone-100 p-3 space-y-2.5">
-              <label className="flex items-center justify-between cursor-pointer">
+              {stitch.type !== 'satin' && <label className="flex items-center justify-between cursor-pointer">
                 <span className="text-[13px] font-semibold">Satin border edge</span>
                 <input type="checkbox" checked={stitch.border} onChange={e => set({ border: e.target.checked })} className="w-5 h-5 accent-stone-900" />
-              </label>
-              {stitch.border && (
+              </label>}
+              {stitch.type !== 'satin' && stitch.border && (
                 <Slider label="Border width" value={stitch.borderWidth} min={2} max={14} unit="px" onChange={v => set({ borderWidth: v })} />
               )}
               <div>

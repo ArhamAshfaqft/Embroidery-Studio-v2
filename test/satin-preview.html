@@ -1,0 +1,31 @@
+<!doctype html><html><body><script type="module">
+import { renderStitch } from '/src/engine/stitch.ts';
+import { renderStitch as previous } from './previous-stitch.ts';
+import { DEFAULT_STITCH } from '/src/types.ts';
+const source = document.createElement('canvas'); source.width=640; source.height=500;
+const c=source.getContext('2d');
+c.fillStyle='#73ac91';
+c.beginPath(); c.moveTo(110,30); c.bezierCurveTo(0,160,55,220,160,260); c.bezierCurveTo(90,160,240,140,110,30); c.fill();
+c.beginPath(); c.moveTo(340,30); c.bezierCurveTo(200,100,220,230,310,270); c.bezierCurveTo(450,160,380,160,340,30); c.fill();
+c.fillStyle='#308756'; c.fillRect(445,65,130,155);
+c.font='italic bold 96px Georgia'; c.fillStyle='#527fa7'; c.fillText('Satin',125,400);
+const opts={...DEFAULT_STITCH,type:'satin',angle:0};
+const started=performance.now(); const after=renderStitch(source,opts); const elapsed=performance.now()-started;
+const before=previous(source,opts);
+const sheet=document.createElement('canvas'); sheet.width=1600; sheet.height=730;
+const s=sheet.getContext('2d'); s.fillStyle='#f1ede5'; s.fillRect(0,0,1600,730);
+s.fillStyle='#242824'; s.font='28px Arial'; s.fillText('Previous satin',40,48); s.fillText('Continuous surface satin',840,48);
+s.drawImage(before,0,70,800,625); s.drawImage(after,800,70,800,625);
+document.body.append(sheet);
+const equal=(a,b)=>a.toDataURL()===b.toDataURL();
+const check=(condition,message)=>{if(!condition)throw Error(message);};
+check(equal(after,renderStitch(source,opts)),'Non-deterministic rendering');
+check(!equal(after,renderStitch(source,{...opts,angle:75})),'Direction has no effect');
+check(!equal(after,renderStitch(source,{...opts,density:2})),'Density has no effect');
+check(!equal(after,renderStitch(source,{...opts,sheen:0})),'Shine has no effect');
+check(after.getContext('2d').getImageData(0,0,1,1).data[3]===0,'Transparency lost');
+const ring=document.createElement('canvas'); ring.width=120;ring.height=120;
+const r=ring.getContext('2d');r.fillStyle='#448866';r.fillRect(10,10,100,100);r.clearRect(40,40,40,40);
+const ringOut=renderStitch(ring,opts);check(ringOut.getContext('2d').getImageData(120,120,1,1).data[3]===0,'Hole filled');
+window.result={image:sheet.toDataURL().split(',')[1],sample:after.toDataURL().split(',')[1],elapsed,checks:6};
+</script></body></html>

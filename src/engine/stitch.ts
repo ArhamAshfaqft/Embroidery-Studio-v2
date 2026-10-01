@@ -121,6 +121,85 @@ export function renderStitch(
   const painted = quantize(px, w, h, s.maxColors);
   const dist = edgeDistance(px, w, h);
 
+  const useBorder = s.border && s.borderWidth > 0;
+  // Keep the slider's meaning constant as working resolution changes
+  const borderPx = s.borderWidth * (Math.max(w, h) / 1000);
+
+  // Shape-following direction field for satin threads.
+  // Thread direction follows the distance-field gradient (across each shape
+  // column, like real satin needle penetrations), smoothed so centrelines
+  // don't fan, fading back to the global angle deep inside large shapes.
+  const needFlow = s.type !== 'tatami' || useBorder;
+  let flowAng: Float32Array | null = null;
+  let flowConf: Float32Array | null = null;
+  let flowW = 0, flowH = 0;
+  if (needFlow) {
+    flowW = Math.max(2, Math.ceil(w / 2));
+    flowH = Math.max(2, Math.ceil(h / 2));
+    let vx: Float32Array = new Float32Array(flowW * flowH);
+    let vy: Float32Array = new Float32Array(flowW * flowH);
+    let vw: Float32Array = new Float32Array(flowW * flowH);
+    for (let fy = 0; fy < flowH; fy++) {
+      for (let fx = 0; fx < flowW; fx++) {
+        const x = Math.min(w - 1, fx * 2), y = Math.min(h - 1, fy * 2);
+        const i = y * w + x;
+        const d = dist[i];
+        if (d <= 0 || d > 34) continue;
+        const xm0 = Math.max(0, x - 2), xm1 = Math.min(w - 1, x + 2);
+        const ym0 = Math.max(0, y - 2), ym1 = Math.min(h - 1, y + 2);
+        const gx = (dist[y * w + xm1] - dist[y * w + xm0]) / Math.max(1, xm1 - xm0);
+        const gy = (dist[ym1 * w + x] - dist[ym0 * w + x]) / Math.max(1, ym1 - ym0);
+        if (gx * gx + gy * gy < 0.0144) continue;
+        const a = Math.atan2(gy, gx);
+        const conf = Math.max(0, 1 - d / 34);
+        const li = fy * flowW + fx;
+        vx[li] = Math.cos(2 * a) * conf;
+        vy[li] = Math.sin(2 * a) * conf;
+        vw[li] = conf;
+      }
+    }
+    const blurSep = (src: Float32Array): Float32Array => {
+      const R = 3;
+      const tmp: Float32Array = new Float32Array(src.length);
+      for (let y = 0; y < flowH; y++)
+        for (let x = 0; x < flowW; x++) {
+          let sum = 0, c = 0;
+          for (let k = -R; k <= R; k++) {
+            const xx = x + k;
+            if (xx < 0 || xx >= flowW) continue;
+            sum += src[y * flowW + xx]; c++;
+          }
+          tmp[y * flowW + x] = sum / c;
+        }
+      const dst: Float32Array = new Float32Array(src.length);
+      for (let y = 0; y < flowH; y++)
+        for (let x = 0; x < flowW; x++) {
+          let sum = 0, c = 0;
+          for (let k = -R; k <= R; k++) {
+            const yy = y + k;
+            if (yy < 0 || yy >= flowH) continue;
+            sum += tmp[yy * flowW + x]; c++;
+          }
+          dst[y * flowW + x] = sum / c;
+        }
+      return dst;
+    };
+    vx = blurSep(vx); vy = blurSep(vy); vw = blurSep(vw);
+    flowAng = new Float32Array(flowW * flowH);
+    flowConf = new Float32Array(flowW * flowH);
+    for (let i = 0; i < flowAng.length; i++) {
+      flowAng[i] = 0.5 * Math.atan2(vy[i], vx[i]);
+      flowConf[i] = Math.min(1, vw[i] * 1.6);
+    }
+  }
+  const sampleFlow = (x: number, y: number): [number, number, number] => {
+    if (!flowAng || !flowConf) return [cosA, sinA, 0];
+    const ix = Math.min(flowW - 1, Math.max(0, Math.round((x / w) * (flowW - 1))));
+    const iy = Math.min(flowH - 1, Math.max(0, Math.round((y / h) * (flowH - 1))));
+    const li = iy * flowW + ix;
+    return [Math.cos(flowAng[li]), Math.sin(flowAng[li]), flowConf[li]];
+  };
+
   const out = makeCanvas(w, h);
   const octx = out.getContext('2d')!;
   const outImg = octx.createImageData(w, h);
@@ -146,9 +225,6 @@ export function renderStitch(
   const satinGap = Math.max(1.4, Math.min(5.2, (3.1 * thickF) / denseF));
   const satinSeg = Math.max(16, 30 * thickF);
 
-  const useBorder = s.border && s.borderWidth > 0;
-  const borderPx = s.borderWidth;
-
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const idx = (y * w + x) * 4;
@@ -156,20 +232,31 @@ export function renderStitch(
       if (a < 24) { op[idx + 3] = 0; continue; }
       const d = dist[y * w + x];
 
-      // Decide stitch family for this pixel
+      // Border band is a satin edge in EVERY mode — the toggle always does something
       const inBorderBand = useBorder && d <= borderPx;
-      let isSatin: boolean;
-      if (s.type === 'tatami') isSatin = false;
-      else if (s.type === 'satin') isSatin = true;
-      else isSatin = inBorderBand; // mix: satin edge, tatami fill
+      const isSatin = s.type === 'satin' || inBorderBand;
 
       let r = painted[idx], g = painted[idx + 1], b = painted[idx + 2];
 
       let nx = 0, ny = 0, nz = 1, ao = 1;
+      // Per-pixel thread direction (satin may follow the shape; tatami stays global)
+      let tX = cosA, tY = sinA;
 
       if (isSatin) {
-        // Satin columns run ALONG the stitch angle — long, dense, glossy
-        const perpX = -sinA, perpY = cosA;
+        if (needFlow) {
+          // Shape-following satin: blend the global angle toward the local
+          // outline direction. Border bands follow the outline fully.
+          const f = sampleFlow(x, y);
+          let ax = f[0], ay = f[1];
+          if (ax * cosA + ay * sinA < 0) { ax = -ax; ay = -ay; }
+          const k = inBorderBand ? 1 : Math.min(1, f[2]) * 0.9;
+          const bx = cosA * (1 - k) + ax * k;
+          const by = sinA * (1 - k) + ay * k;
+          const bl = Math.sqrt(bx * bx + by * by) || 1;
+          tX = bx / bl; tY = by / bl;
+        }
+        // Satin columns run ALONG the (possibly shape-following) thread direction
+        const perpX = -tY, perpY = tX;
         const row = x * perpX + y * perpY;
         const gap = satinGap;
         const mod = ((row % gap) + gap) % gap;
@@ -181,7 +268,7 @@ export function renderStitch(
         const crevice = Math.pow(Math.abs(t), 2.6) * (0.28 + sheenF * 0.1);
         ao = Math.max(0.45, 1 - crevice);
         // subtle lengthwise needle valleys
-        const along = x * cosA + y * sinA;
+        const along = x * tX + y * tY;
         const segM = ((along % satinSeg) + satinSeg) % satinSeg;
         const segT = (segM / satinSeg) * 2 - 1;
         ao *= 1 - Math.pow(Math.abs(segT), 6) * 0.18;
@@ -206,9 +293,9 @@ export function renderStitch(
         ao = Math.max(0.4, 1 - crevice);
       }
 
-      // Twist fibre ripple
-      const fibre = Math.sin((x * cosA + y * sinA) * 1.4) * 0.05;
-      nx += fibre * -sinA; ny += fibre * cosA;
+      // Twist fibre ripple (follows local thread direction)
+      const fibre = Math.sin((x * tX + y * tY) * 1.4) * 0.05;
+      nx += fibre * -tY; ny += fibre * tX;
 
       // Raised edge bevel
       const edgeF = Math.min(1, d / 3.5);
@@ -219,8 +306,8 @@ export function renderStitch(
 
       const nDotL = Math.max(0, nx * lx + ny * ly + nz * lz);
       const diffuse = 0.52 + 0.48 * nDotL;
-      // Anisotropic sheen along thread direction
-      const tDotL = cosA * lx + sinA * ly;
+      // Anisotropic sheen along local thread direction
+      const tDotL = tX * lx + tY * ly;
       const sheen = Math.pow(Math.max(0, Math.sqrt(Math.max(0, 1 - tDotL * tDotL))), 10) * (0.15 + sheenF * 0.85);
       const lit = diffuse * (1 + sheen * 0.55) * ao;
 

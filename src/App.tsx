@@ -3,7 +3,7 @@ import { Upload, Type, ArrowRight, ArrowLeft, Download, Trash2, Check, ZoomIn, Z
 import { DEFAULT_STITCH, STITCH_CARDS, StitchSettings } from './types';
 import { renderStitch } from './engine/stitch';
 import { DEFAULT_TEXT, TEXT_FONTS, TextState, renderText } from './engine/text';
-import { loadImage } from './engine/imageTools';
+import { loadImage, removeBackground } from './engine/imageTools';
 import { MOCKUPS } from './engine/mockups';
 import { DEFAULT_SEW, SewOptions, sewOntoGarment } from './engine/sew';
 
@@ -300,7 +300,15 @@ export default function App() {
       c.width = w; c.height = h;
       c.getContext('2d')!.drawImage(img, 0, 0, w, h);
       URL.revokeObjectURL(url);
-      const dataUrl = c.toDataURL('image/png');
+      // Automatic cleanup: strip an edge-connected white/black photo backdrop
+      // (logos on white would otherwise stitch as a solid rectangle).
+      // Interior whites and transparent PNGs are left untouched.
+      let dataUrl = c.toDataURL('image/png');
+      try {
+        // removeBackground only strips an edge-connected near-white/black
+        // artboard and returns the image unchanged otherwise
+        dataUrl = removeBackground(c);
+      } catch { /* keep original */ }
       setSourceUrl(dataUrl);
       setSourceName(f.name.replace(/\.[^.]+$/, ''));
       setSourceSize({ w, h });
@@ -539,8 +547,8 @@ export default function App() {
               <button onClick={() => setStep(1)} className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm text-stone-600 hover:bg-stone-100">
                 <ArrowLeft size={16} /> Back</button>
               <div className="flex gap-2">
-                <button onClick={() => stitchedUrl && download(stitchedUrl, `${sourceName}-stitch.png`)}
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm border border-stone-300 hover:bg-stone-100">
+                <button disabled={!stitchedUrl || isStitching} onClick={() => stitchedUrl && download(stitchedUrl, `${sourceName}-stitch.png`)}
+                  className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm border border-stone-300 ${!stitchedUrl || isStitching ? 'opacity-40 cursor-wait' : 'hover:bg-stone-100'}`}>
                   <Download size={16} /> Save PNG</button>
                 <button disabled={!stitchedUrl} onClick={() => setStep(3)}
                   className="flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold text-sm bg-amber-400 hover:bg-amber-300 text-stone-950 disabled:opacity-40">
@@ -672,13 +680,13 @@ export default function App() {
               <button onClick={() => setStep(2)} className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm text-stone-600 hover:bg-stone-100">
                 <ArrowLeft size={16} /> Back to stitches</button>
               <div className="flex gap-2">
-                <button onClick={() => stitchedUrl && download(stitchedUrl, `${sourceName}-stitch.png`)}
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm border border-stone-300 hover:bg-stone-100">
+                <button disabled={sewStatus !== '' || isPlacing || !garmentImg || !stitchedUrl} onClick={() => stitchedUrl && download(stitchedUrl, `${sourceName}-stitch.png`)}
+                  className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm border border-stone-300 ${(sewStatus !== '' || isPlacing || !garmentImg || !stitchedUrl) ? 'opacity-40 cursor-wait' : 'hover:bg-stone-100'}`}>
                   <Download size={16} /> Stitch PNG</button>
-                <button onClick={() => {
+                <button disabled={sewStatus !== '' || isPlacing || !garmentImg} onClick={() => {
                   const c = mockupCanvasRef.current;
                   if (c) download(c.toDataURL('image/png'), `${sourceName}-${mockupId}.png`);
-                }} className="flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold text-sm bg-stone-900 text-white hover:bg-stone-700">
+                }} className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold text-sm bg-stone-900 text-white ${(sewStatus !== '' || isPlacing || !garmentImg) ? 'opacity-40 cursor-wait' : 'hover:bg-stone-700'}`}>
                   <Download size={16} /> Export mockup</button>
               </div>
             </div>

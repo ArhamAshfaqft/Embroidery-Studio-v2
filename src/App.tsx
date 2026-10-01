@@ -100,6 +100,8 @@ export default function App() {
 
   // mockup
   const [mockupId, setMockupId] = useState(MOCKUPS[0].id);
+  const [customMockups, setCustomMockups] = useState<{ id: string; name: string; url: string }[]>([]);
+  const mockupFileRef = useRef<HTMLInputElement>(null);
   const [pos, setPos] = useState({ x: 50, y: 42, scale: 0.42, rotation: 0 });
   const [sew, setSew] = useState<SewOptions>(DEFAULT_SEW);
   const [sewStatus, setSewStatus] = useState('');
@@ -110,7 +112,37 @@ export default function App() {
   const [view3, setView3] = useState<View>(freshView());
   const [geom, setGeom] = useState<{ cx: number; cy: number; cw: number; ch: number } | null>(null);
 
-  const mockup = useMemo(() => MOCKUPS.find(m => m.id === mockupId)!, [mockupId]);
+  const allMockups = useMemo(
+    () => [...customMockups.map(c => ({ id: c.id, name: c.name, file: c.url })), ...MOCKUPS],
+    [customMockups]
+  );
+  const mockup = useMemo(
+    () => allMockups.find(m => m.id === mockupId) ?? allMockups[0],
+    [allMockups, mockupId]
+  );
+
+  /** Client's own garment photo as a mockup background */
+  const handleMockupFile = async (f: File) => {
+    if (!f.type.startsWith('image/')) { alert('Please upload an image (PNG / JPG / WebP).'); return; }
+    const url = URL.createObjectURL(f);
+    try {
+      await loadImage(url);
+      const id = `custom_${Date.now()}`;
+      setCustomMockups(prev => [{ id, name: f.name.replace(/\.[^.]+$/, ''), url }, ...prev]);
+      setMockupId(id);
+    } catch {
+      URL.revokeObjectURL(url);
+      alert('Could not read that image.');
+    }
+  };
+  const removeCustomMockup = (id: string) => {
+    setCustomMockups(prev => {
+      const found = prev.find(c => c.id === id);
+      if (found) URL.revokeObjectURL(found.url);
+      return prev.filter(c => c.id !== id);
+    });
+    if (mockupId === id) setMockupId(MOCKUPS[0].id);
+  };
 
   // ---- text → source ----
   const textRender = useMemo(() => {
@@ -566,13 +598,28 @@ export default function App() {
             <div>
               <div className="text-[13px] font-bold mb-2">Choose garment</div>
               <div className="grid grid-cols-3 gap-1.5">
-                {MOCKUPS.map(m => (
-                  <button key={m.id} onClick={() => setMockupId(m.id)} title={m.name}
-                    className={`rounded-xl overflow-hidden border-2 ${mockupId === m.id ? 'border-stone-900 shadow' : 'border-stone-200 hover:border-stone-400'}`}>
-                    <img src={m.file} alt={m.name} className="w-full h-16 object-cover" />
-                  </button>
-                ))}
+                {allMockups.map(m => {
+                  const isCustom = customMockups.some(c => c.id === m.id);
+                  return (
+                    <div key={m.id} className="relative">
+                      <button onClick={() => setMockupId(m.id)} title={m.name}
+                        className={`rounded-xl overflow-hidden border-2 w-full ${mockupId === m.id ? 'border-stone-900 shadow' : 'border-stone-200 hover:border-stone-400'}`}>
+                        <img src={m.file} alt={m.name} className="w-full h-16 object-cover" />
+                      </button>
+                      {isCustom && (
+                        <button onClick={() => removeCustomMockup(m.id)} title="Remove"
+                          className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-stone-900 text-white text-[11px] font-bold leading-none shadow">×</button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
+              <button onClick={() => mockupFileRef.current?.click()}
+                className="mt-2 w-full flex items-center justify-center gap-2 py-2 rounded-xl border-2 border-dashed border-stone-300 hover:border-stone-500 text-[13px] font-semibold text-stone-600">
+                <Upload size={14} /> Use your own mockup photo
+              </button>
+              <input ref={mockupFileRef} type="file" accept="image/*" className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; if (f) handleMockupFile(f); e.target.value = ''; }} />
               <div className="text-[12px] text-stone-500 mt-1.5 font-medium">{mockup.name} · scroll to zoom, drag background to pan, drag design to move it</div>
             </div>
             <div className="space-y-3">

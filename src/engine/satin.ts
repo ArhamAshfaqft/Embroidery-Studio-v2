@@ -1,4 +1,5 @@
 import type { StitchSettings } from '../types';
+import { applyArtworkOutline } from './artworkOutline';
 
 /** Edge-to-edge horizontal (or user-directed) floss with a cylindrical,
  * twisted multi-ply surface. Material coordinates belong to each whole strand,
@@ -112,6 +113,6 @@ export function renderSatin(source: ImageData, settings: StitchSettings, detail 
     }
   }
   ctx.putImageData(out, 0, 0);
-  return canvas;
+  return applyArtworkOutline(canvas, source, settings);
 }
 

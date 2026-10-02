@@ -1,0 +1,65 @@
+<!doctype html><html><body><script type="module">
+import { renderStitch } from '/src/engine/stitch.ts';
+import { renderSatin } from '/src/engine/satin.ts';
+import { DEFAULT_STITCH } from '/src/types.ts';
+window.done=(async()=>{
+const check=(v,m)=>{if(!v)throw Error(m);};let checks=0;
+const pass=(v,m)=>{check(v,m);checks++;};
+const fixture=document.createElement('canvas');fixture.width=320;fixture.height=200;
+const c=fixture.getContext('2d');c.fillStyle='#d52b38';c.fillRect(20,20,140,160);
+c.fillStyle='#23824b';c.fillRect(160,20,140,160);c.clearRect(80,70,40,60);
+const settings={...DEFAULT_STITCH,type:'satin',angle:0,outline:true,outlineWidth:12};
+const rgba=(canvas,x,y)=>canvas.getContext('2d').getImageData(x,y,1,1).data;
+const same=(a,b)=>Array.from(a).every((v,i)=>v===b[i]);
+for(const type of ['satin','tatami','mix']){
+ const off=renderStitch(fixture,{...settings,type,outline:false});
+ const on=renderStitch(fixture,{...settings,type});
+ pass(!same(rgba(off,44,100),rgba(on,44,100)),`${type}: exterior outline missing`);
+ pass(!same(rgba(off,155,180),rgba(on,155,180)),`${type}: letter-hole outline missing`);
+ pass(same(rgba(off,319,60),rgba(on,319,60)),`${type}: internal colour seam was outlined`);
+ const a=off.getContext('2d').getImageData(0,0,off.width,off.height).data;
+ const b=on.getContext('2d').getImageData(0,0,on.width,on.height).data;
+ pass(a.every((v,i)=>i%4!==3||v===b[i]),`${type}: silhouette or holes changed`);
+ pass(rgba(on,44,100)[0]>rgba(on,44,100)[1] && rgba(on,595,100)[1]>rgba(on,595,100)[0],`${type}: edge colours not inherited`);
+}
+const narrow=renderStitch(fixture,{...settings,outlineWidth:2});
+const wide=renderStitch(fixture,settings);
+pass(narrow.toDataURL()!==wide.toDataURL(),'Width has no effect');
+const raw=c.getImageData(0,0,320,200);
+const hd=renderSatin(raw,settings,3);
+pass(hd.width===960&&rgba(hd,300,300)[3]===0,'Zoom outline fills hole or changes dimensions');
+const blank=document.createElement('canvas');blank.width=80;blank.height=80;
+pass(rgba(renderStitch(blank,settings),40,40)[3]===0,'Empty artwork changed');
+const worker=new Worker('/src/engine/satinPreview.worker.ts',{type:'module'});
+const source=await new Promise(resolve=>fixture.toBlob(resolve));
+const reply=await new Promise((resolve,reject)=>{
+ const timeout=setTimeout(()=>reject(Error('Outline worker timed out')),20000);
+ worker.onmessage=({data})=>{clearTimeout(timeout);data.error?reject(Error(data.error)):resolve(data);};
+ worker.onerror=reject;worker.postMessage({source,settings,zoom:1,dpr:1});
+});worker.terminate();
+const bitmap=await createImageBitmap(reply.blob);
+const workerCanvas=document.createElement('canvas');workerCanvas.width=bitmap.width;workerCanvas.height=bitmap.height;
+workerCanvas.getContext('2d').drawImage(bitmap,0,0);bitmap.close();
+const workerPixels=workerCanvas.getContext('2d').getImageData(0,0,workerCanvas.width,workerCanvas.height).data;
+const uploaded=new Image(); uploaded.src=URL.createObjectURL(source);await uploaded.decode();
+const exported=renderStitch(uploaded,settings);URL.revokeObjectURL(uploaded.src);
+const exportPixels=exported.getContext('2d').getImageData(0,0,exported.width,exported.height).data;
+let parityError=0, parityMax=0;
+for(let i=0;i<workerPixels.length;i++){const delta=Math.abs(workerPixels[i]-exportPixels[i]);parityError+=delta;parityMax=Math.max(parityMax,delta);}
+pass(workerPixels.length===exportPixels.length && parityError/workerPixels.length<0.1 && parityMax<=4,`Worker/export difference: mean ${parityError/workerPixels.length}, max ${parityMax}`);
+
+const art=document.createElement('canvas');art.width=740;art.height=500;
+const ac=art.getContext('2d');ac.fillStyle='#131313';ac.font='bold 125px Georgia';ac.fillText('Lake',190,135);ac.fillText('Ontario',90,285);
+ac.fillStyle='#782ad1';ac.beginPath();ac.arc(230,400,77,0,Math.PI*2);ac.fill();
+ac.fillStyle='#1b1b1b';ac.fillRect(230,325,140,150);
+ac.fillStyle='#e6e6e6';ac.font='bold 118px Arial';ac.fillText('HG',180,442);
+const before=renderStitch(art,{...settings,outline:false});
+const after=renderStitch(art,{...settings,outlineWidth:5});
+const sheet=document.createElement('canvas');sheet.width=1600;sheet.height=670;
+const sc=sheet.getContext('2d');sc.fillStyle='#e8e5df';sc.fillRect(0,0,1600,670);
+sc.fillStyle='#242424';sc.font='27px Arial';sc.fillText('Outline off',30,40);sc.fillText('Same-colour stitched outline',830,40);
+sc.drawImage(before,0,65,800,540);sc.drawImage(after,800,65,800,540);
+document.body.append(sheet);
+return {checks,image:sheet.toDataURL().split(',')[1],sample:after.toDataURL().split(',')[1]};
+})();
+</script></body></html>

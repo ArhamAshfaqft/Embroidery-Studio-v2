@@ -17,6 +17,12 @@ export interface StitchSettings {
   borderWidth: number;
   /** max thread colours — 0 = keep full colour */
   maxColors: number;
+  /** Raised perimeter stitching, using the artwork's existing edge colours. */
+  outline?: boolean;
+  /** Width at a 1000px working dimension. */
+  outlineWidth?: number;
+  /** Include enclosed transparent openings as well as the exterior perimeter. */
+  outlineHoles?: boolean;
 }
 
 export const DEFAULT_STITCH: StitchSettings = {
@@ -27,7 +33,10 @@ export const DEFAULT_STITCH: StitchSettings = {
   sheen: 55,
   border: true,
   borderWidth: 7,
-  maxColors: 0
+  maxColors: 0,
+  outline: false,
+  outlineWidth: 4,
+  outlineHoles: true
 };
 
 export const STITCH_CARDS: { id: StitchType; name: string; desc: string }[] = [

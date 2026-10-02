@@ -537,6 +537,14 @@ export default function App() {
               <Slider label="Thread shine" value={stitch.sheen} min={0} max={100} unit="%" onChange={v => set({ sheen: v })} />
             </div>
             <div className="rounded-xl bg-stone-100 p-3 space-y-2.5">
+              <label className="flex items-center justify-between cursor-pointer">
+                <span className="text-[13px] font-semibold">Stitched outline</span>
+                <input type="checkbox" checked={!!stitch.outline} onChange={e => set({ outline: e.target.checked })} className="w-5 h-5 accent-stone-900" />
+              </label>
+              {stitch.outline && <>
+                <p className="text-xs text-stone-500">Follows outer edges and letter holes, matching your artwork’s colours.</p>
+                <Slider label="Outline width" value={stitch.outlineWidth ?? 4} min={1} max={12} onChange={v => set({ outlineWidth: v })} />
+              </>}
               {stitch.type !== 'satin' && <label className="flex items-center justify-between cursor-pointer">
                 <span className="text-[13px] font-semibold">Satin border edge</span>
                 <input type="checkbox" checked={stitch.border} onChange={e => set({ border: e.target.checked })} className="w-5 h-5 accent-stone-900" />

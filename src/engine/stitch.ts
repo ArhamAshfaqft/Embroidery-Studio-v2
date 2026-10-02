@@ -1,5 +1,6 @@
 import type { StitchSettings } from '../types';
 import { renderSatin } from './satin';
+import { applyArtworkOutline } from './artworkOutline';
 
 /**
  * SimpleStitch — a small, focused embroidery renderer.
@@ -345,5 +346,5 @@ export function renderStitch(
   fctx.drawImage(out, 0, 0);
   fctx.restore();
   fctx.drawImage(out, 0, 0);
-  return fin;
+  return applyArtworkOutline(fin, new ImageData(new Uint8ClampedArray(painted), w, h), s);
 }

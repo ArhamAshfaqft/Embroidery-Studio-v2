@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { Upload, Type, ArrowRight, ArrowLeft, Download, Trash2, Check, ZoomIn, ZoomOut, Maximize2, Hand, FileUp } from 'lucide-react';
 import { DEFAULT_STITCH, STITCH_CARDS, StitchSettings } from './types';
 import { renderStitch } from './engine/stitch';
+import { SatinPreview } from './SatinPreview';
 import { DEFAULT_TEXT, TEXT_FONTS, TextState, renderText } from './engine/text';
 import { loadImage, removeBackground } from './engine/imageTools';
 import { MOCKUPS } from './engine/mockups';
@@ -159,17 +160,19 @@ export default function App() {
   // ---- stitch render (debounced) ----
   useEffect(() => {
     if (!sourceUrl || step < 2) return;
+    let cancelled = false;
     setIsStitching(true);
     const t = setTimeout(async () => {
       try {
         const img = await loadImage(sourceUrl);
+        if (cancelled) return;
         const out = renderStitch(img, stitch);
         stitchCanvasRef.current = out;
         setStitchedUrl(out.toDataURL('image/png'));
       } catch (e) { console.warn('stitch failed', e); }
-      setIsStitching(false);
+      if (!cancelled) setIsStitching(false);
     }, 180);
-    return () => clearTimeout(t);
+    return () => { cancelled = true; clearTimeout(t); };
   }, [sourceUrl, stitch, step]);
 
   // ---- garment load ----
@@ -566,8 +569,10 @@ export default function App() {
               <div className="flex gap-4">
                 {(compare ? [sourceUrl, stitchedUrl] : [stitchedUrl]).map((url, i) => url ? (
                   <div key={i} className="text-center">
-                    <img src={url} alt={i === 0 && compare ? 'original' : 'stitched'}
-                      className="max-w-[440px] max-h-[480px] object-contain rounded-2xl shadow-xl canvas-checker bg-white p-4" draggable={false} />
+                    {stitch.type === 'satin' && !(i === 0 && compare) && sourceUrl ?
+                      <SatinPreview source={sourceUrl} baseline={url} settings={stitch} zoom={view2.z} /> :
+                      <img src={url} alt={i === 0 && compare ? 'original' : 'stitched'}
+                        className="max-w-[440px] max-h-[480px] object-contain rounded-2xl shadow-xl canvas-checker bg-white p-4" draggable={false} />}
                     <div className="text-[11px] font-bold uppercase tracking-wider text-stone-500 mt-2">
                       {compare ? (i === 0 ? 'Original artwork' : 'Stitched result') : 'Stitched result'}</div>
                   </div>

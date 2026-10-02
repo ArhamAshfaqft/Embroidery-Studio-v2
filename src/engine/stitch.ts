@@ -46,7 +46,7 @@ function edgeDistance(alpha: Uint8ClampedArray, w: number, h: number): Float32Ar
 }
 
 /** Reduce to N thread colours via histogram buckets (fast, stable) */
-function quantize(pixels: Uint8ClampedArray, w: number, h: number, maxColors: number): Uint8ClampedArray {
+export function quantize(pixels: Uint8ClampedArray, w: number, h: number, maxColors: number): Uint8ClampedArray {
   if (!maxColors || maxColors <= 0) return pixels;
   const out = new Uint8ClampedArray(pixels);
   const hist = new Map<number, { r: number; g: number; b: number; count: number }>();

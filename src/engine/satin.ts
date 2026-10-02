@@ -3,14 +3,24 @@ import type { StitchSettings } from '../types';
 /** Edge-to-edge horizontal (or user-directed) floss with a cylindrical,
  * twisted multi-ply surface. Material coordinates belong to each whole strand,
  * so changing illumination never breaks it into short disconnected stitches. */
-export function renderSatin(source: ImageData, settings: StitchSettings): HTMLCanvasElement {
+export function renderSatin(source: ImageData, settings: StitchSettings, detail = 1): HTMLCanvasElement {
   const { width: w, height: h, data } = source;
-  const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+  // Geometry remains in source coordinates; only sampling density changes.
+  // The worker uses the same 2D canvas surface without touching the DOM.
+  detail = Math.max(1, Math.min(detail, 8, 8192 / w, 8192 / h, Math.sqrt(16_000_000 / (w * h))));
+  const rw = Math.round(w * detail), rh = Math.round(h * detail);
+  const scaleX = rw / w, scaleY = rh / h;
+  const canvas = (typeof document === 'undefined'
+    ? new OffscreenCanvas(rw, rh) : document.createElement('canvas')) as HTMLCanvasElement;
+  canvas.width = rw; canvas.height = rh;
   const ctx = canvas.getContext('2d')!;
-  const out = ctx.createImageData(w, h), pixels = out.data;
-  for (let i = 0; i < data.length; i += 4) {
-    pixels[i] = data[i] * 0.76; pixels[i + 1] = data[i + 1] * 0.76;
-    pixels[i + 2] = data[i + 2] * 0.76; pixels[i + 3] = data[i + 3];
+  const out = ctx.createImageData(rw, rh), pixels = out.data;
+  for (let y = 0; y < rh; y++) for (let x = 0; x < rw; x++) {
+    const i = (y * rw + x) * 4;
+    const si = (Math.min(h - 1, Math.floor((y + 0.5) / scaleY)) * w
+      + Math.min(w - 1, Math.floor((x + 0.5) / scaleX))) * 4;
+    pixels[i] = data[si] * 0.76; pixels[i + 1] = data[si + 1] * 0.76;
+    pixels[i + 2] = data[si + 2] * 0.76; pixels[i + 3] = data[si + 3];
   }
   const angle = settings.angle * Math.PI / 180;
   const tx = Math.cos(angle), ty = Math.sin(angle), nx = -ty, ny = tx;
@@ -41,10 +51,10 @@ export function renderSatin(source: ImageData, settings: StitchSettings): HTMLCa
       const sx = w / 2 + start * tx + vv * nx, sy = h / 2 + start * ty + vv * ny;
       const ex = sx + length * tx, ey = sy + length * ty;
       const margin = width * 0.65 + 1;
-      const minX = Math.max(0, Math.floor(Math.min(sx, ex) - margin));
-      const maxX = Math.min(w - 1, Math.ceil(Math.max(sx, ex) + margin));
-      const minY = Math.max(0, Math.floor(Math.min(sy, ey) - margin));
-      const maxY = Math.min(h - 1, Math.ceil(Math.max(sy, ey) + margin));
+      const minX = Math.max(0, Math.floor((Math.min(sx, ex) - margin) * scaleX));
+      const maxX = Math.min(rw - 1, Math.ceil((Math.max(sx, ex) + margin) * scaleX));
+      const minY = Math.max(0, Math.floor((Math.min(sy, ey) - margin) * scaleY));
+      const maxY = Math.min(rh - 1, Math.ceil((Math.max(sy, ey) + margin) * scaleY));
       for (let y = minY; y <= maxY; y++) {
         // Intersect a scanline with the narrow oriented strand, avoiding the
         // quadratic bounding-box cost for long diagonal stitches.
@@ -55,12 +65,13 @@ export function renderSatin(source: ImageData, settings: StitchSettings): HTMLCa
           left = Math.max(left, Math.ceil(Math.min(p, q)));
           right = Math.min(right, Math.floor(Math.max(p, q)));
         };
-        clip(tx, (0.5 - sx) * tx + (y + 0.5 - sy) * ty, 0, length);
-        clip(nx, (0.5 - sx) * nx + (y + 0.5 - sy) * ny, -margin, margin);
+        clip(tx / scaleX, (0.5 / scaleX - sx) * tx + ((y + 0.5) / scaleY - sy) * ty, 0, length);
+        clip(nx / scaleX, (0.5 / scaleX - sx) * nx + ((y + 0.5) / scaleY - sy) * ny, -margin, margin);
         for (let x = left; x <= right; x++) {
-        const i = (y * w + x) * 4;
+        const oi = (y * rw + x) * 4;
+        const i = (Math.min(h - 1, Math.floor((y + 0.5) / scaleY)) * w + Math.min(w - 1, Math.floor((x + 0.5) / scaleX))) * 4;
         if (data[i + 3] < 1) continue;
-        const dx = x + 0.5 - sx, dy = y + 0.5 - sy;
+        const dx = (x + 0.5) / scaleX - sx, dy = (y + 0.5) / scaleY - sy;
         const u = dx * tx + dy * ty;
         if (u < 0 || u > length || different(first, i)) continue;
         // Straight overall rows, but soft surface variation prevents ruler-like grooves.
@@ -68,7 +79,7 @@ export function renderSatin(source: ImageData, settings: StitchSettings): HTMLCa
         const localWidth = width * (1 + 0.055 * Math.sin(u * 0.08 + phase));
         const cross = dx * nx + dy * ny - wander;
         const q = cross / (localWidth * 0.5);
-        const coverage = Math.min(1, Math.max(0, (localWidth * 0.5 - Math.abs(cross)) + 0.5));
+        const coverage = Math.min(1, Math.max(0, (localWidth * 0.5 - Math.abs(cross)) * detail + 0.5));
         if (coverage === 0) continue;
         const clamped = Math.max(-0.999, Math.min(0.999, q));
         const crown = Math.sqrt(1 - clamped * clamped);
@@ -89,7 +100,7 @@ export function renderSatin(source: ImageData, settings: StitchSettings): HTMLCa
         const glint = (5 + shine * 25) * ridge * Math.pow(crown, 0.7) * insertion;
         for (let channel = 0; channel < 3; channel++) {
           const value = Math.min(255, data[i + channel] * lit + glint);
-          pixels[i + channel] = pixels[i + channel] * (1 - coverage) + value * coverage;
+          pixels[oi + channel] = pixels[oi + channel] * (1 - coverage) + value * coverage;
         }
       }
       }

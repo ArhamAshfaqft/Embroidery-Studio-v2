@@ -1,0 +1,41 @@
+<!doctype html><html><body><script type="module">
+import { renderSatin } from '/src/engine/satin.ts';
+import { satinPreviewDetail } from '/src/engine/previewDetail.ts';
+import { DEFAULT_STITCH } from '/src/types.ts';
+window.done=(async()=>{
+const check=(v,m)=>{if(!v)throw Error(m);};
+const input=document.createElement('canvas');input.width=320;input.height=180;
+const c=input.getContext('2d');c.fillStyle='#e8ab29';c.fillRect(15,15,290,150);c.clearRect(140,60,40,60);
+const data=c.getImageData(0,0,320,180),settings={...DEFAULT_STITCH,type:'satin',angle:0};
+const base=renderSatin(data,settings),detail=renderSatin(data,settings,3);
+check(detail.width===960 && detail.height===540,'Incorrect high-resolution dimensions');
+const b=base.getContext('2d').getImageData(0,0,320,180).data;
+const d=detail.getContext('2d').getImageData(0,0,960,540).data;
+let error=0,count=0,identical=0;
+for(let y=20;y<155;y++)for(let x=20;x<135;x++){
+ const i=(y*320+x)*4,j=((y*3+1)*960+x*3+1)*4;
+ const diff=Math.abs(b[i]-d[j]);error+=diff;count++;if(diff<=1)identical++;
+}
+check(error/count<5 && identical/count>0.8,'Thread pattern or scale changed on zoom');
+check(d[(270*960+480)*4+3]===0,'High-resolution render filled a hole');
+check(satinPreviewDetail(2000,1000,1,1)===1,'Normal preview needlessly enlarged');
+const capped=satinPreviewDetail(2000,2000,8,3);
+check(capped*capped*4000000<=16000001,'Memory budget exceeded');
+const worker=new Worker('/src/engine/satinPreview.worker.ts',{type:'module'});
+const source=await new Promise(resolve=>input.toBlob(resolve));
+const reply=await new Promise((resolve,reject)=>{
+ const timeout=setTimeout(()=>reject(Error('Worker timed out')),20000);
+ worker.onmessage=({data})=>{clearTimeout(timeout);data.error?reject(Error(data.error)):resolve(data);};
+ worker.onerror=reject;worker.postMessage({source,settings,zoom:8,dpr:2});
+});worker.terminate();
+const bitmap=await createImageBitmap(reply.blob);
+check(bitmap.width>reply.w && bitmap.height>reply.h,'Worker did not add detail at 800%');bitmap.close();
+const sheet=document.createElement('canvas');sheet.width=1440;sheet.height=550;
+const s=sheet.getContext('2d');s.fillStyle='#eeeae3';s.fillRect(0,0,1440,550);
+s.fillStyle='#222';s.font='25px Arial';s.fillText('Before: enlarged preview pixels',25,40);s.fillText('After: freshly rendered thread detail',745,40);
+s.drawImage(base,30,30,115,70,25,75,690,420);
+s.drawImage(detail,90,90,345,210,745,75,690,420);
+document.body.append(sheet);
+return {checks:6,meanDifference:error/count,stableSamples:identical/count,image:sheet.toDataURL().split(',')[1]};
+})();
+</script></body></html>

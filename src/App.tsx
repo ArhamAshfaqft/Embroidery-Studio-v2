@@ -13,7 +13,7 @@ type Step = 1 | 2 | 3;
 const THREAD_COLORS = ['#b91c1c', '#1d4ed8', '#15803d', '#111111', '#f59e0b', '#ec4899', '#ffffff', '#0ea5e9'];
 
 /** Mockup composite resolution — high enough that deep zoom stays sharp */
-const COMP = 1400;
+const COMP = 2800;
 
 function Slider(props: { label: string; value: number; min: number; max: number; step?: number; unit?: string; onChange: (v: number) => void }) {
   return (
@@ -220,7 +220,7 @@ export default function App() {
   }, [garmentImg, pos, sew, isPlacing]);
   useEffect(() => { const cancel = paintMockup(); return cancel; }, [paintMockup, stitchedUrl]);
 
-  // ---- design hit-test (internal 900px coords) ----
+  // ---- design hit-test (internal composite coordinates) ----
   const designHalf = () => {
     const emb = stitchCanvasRef.current;
     const ew = COMP * pos.scale;

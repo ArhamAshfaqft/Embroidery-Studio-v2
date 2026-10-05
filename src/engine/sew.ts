@@ -1,247 +1,115 @@
-/**
- * sew.ts — realistic "sewn into fabric" compositing (simplified V1 technique).
- *
- * Three effects stop the sticker look:
- *  1. Wrinkle wrap  — stitches bend over garment folds (luminance-gradient displacement)
- *  2. Fabric shading — thread takes on the garment's local light + weave texture
- *  3. Contact shadow — tight darkening where thread meets cloth (no floating drop shadow)
- *
- * All options are 0–100. At 0/0/0 the design is pasted sharp with zero
- * resampling loss (true sticker) — only the shadow slider adds anything.
- */
-
+/** Fabric compositing: antialiased placement, broad fold wrapping and restrained lighting. */
 export interface SewPlacement {
-  x: number; // percent of canvas width
-  y: number; // percent of canvas height
-  scale: number; // stitch width as fraction of canvas width
-  rotation: number; // degrees
+  x: number; y: number; scale: number; rotation: number;
 }
-
-export interface SewOptions {
-  sewIn: number; // 0 = sticker, 100 = fully takes on fabric light/texture
-  wrap: number; // 0 = flat, 100 = bends hard over wrinkles
-  shadow: number; // contact shadow strength
-}
-
+export interface SewOptions { sewIn: number; wrap: number; shadow: number }
 export const DEFAULT_SEW: SewOptions = { sewIn: 15, wrap: 10, shadow: 20 };
 
-function lum(r: number, g: number, b: number): number {
-  return 0.299 * r + 0.587 * g + 0.114 * b;
+function canvas(w: number, h: number) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h; return c;
 }
-
-/** Smooth bilinear sample of the stitch layer (sharp, no nearest-neighbour crunch) */
-function makeSampler(sData: Uint8ClampedArray, sw: number, sh: number) {
-  return (u: number, v: number): [number, number, number, number] => {
-    const fx = Math.min(sw - 1.001, Math.max(0, u * (sw - 1)));
-    const fy = Math.min(sh - 1.001, Math.max(0, v * (sh - 1)));
-    const x0 = Math.floor(fx), y0 = Math.floor(fy);
-    const tx = fx - x0, ty = fy - y0;
-    const x1 = Math.min(sw - 1, x0 + 1), y1 = Math.min(sh - 1, y0 + 1);
-    const i00 = (y0 * sw + x0) * 4, i10 = (y0 * sw + x1) * 4;
-    const i01 = (y1 * sw + x0) * 4, i11 = (y1 * sw + x1) * 4;
-    const w00 = (1 - tx) * (1 - ty), w10 = tx * (1 - ty), w01 = (1 - tx) * ty, w11 = tx * ty;
-    return [
-      sData[i00] * w00 + sData[i10] * w10 + sData[i01] * w01 + sData[i11] * w11,
-      sData[i00 + 1] * w00 + sData[i10 + 1] * w10 + sData[i01 + 1] * w01 + sData[i11 + 1] * w11,
-      sData[i00 + 2] * w00 + sData[i10 + 2] * w10 + sData[i01 + 2] * w01 + sData[i11 + 2] * w11,
-      (sData[i00 + 3] * w00 + sData[i10 + 3] * w10 + sData[i01 + 3] * w01 + sData[i11 + 3] * w11) / 255
-    ];
-  };
+function blur(src: Float32Array, w: number, h: number, radius: number) {
+  const tmp = new Float32Array(src.length), out = new Float32Array(src.length);
+  const r = Math.max(1, Math.round(radius)), span = 2 * r + 1;
+  for (let y = 0; y < h; y++) {
+    let sum = 0;
+    for (let k = -r; k <= r; k++) sum += src[y * w + Math.max(0, Math.min(w - 1, k))];
+    for (let x = 0; x < w; x++) {
+      tmp[y * w + x] = sum / span;
+      sum += src[y * w + Math.min(w - 1, x + r + 1)] - src[y * w + Math.max(0, x - r)];
+    }
+  }
+  for (let x = 0; x < w; x++) {
+    let sum = 0;
+    for (let k = -r; k <= r; k++) sum += tmp[Math.max(0, Math.min(h - 1, k)) * w + x];
+    for (let y = 0; y < h; y++) {
+      out[y * w + x] = sum / span;
+      sum += tmp[Math.min(h - 1, y + r + 1) * w + x] - tmp[Math.max(0, y - r) * w + x];
+    }
+  }
+  return out;
 }
+function field(data: Float32Array, w: number, h: number, x: number, y: number) {
+  x = Math.max(0, Math.min(w - 1, x)); y = Math.max(0, Math.min(h - 1, y));
+  const ix = Math.floor(x), iy = Math.floor(y), fx = x - ix, fy = y - iy;
+  const nx = Math.min(w - 1, ix + 1), ny = Math.min(h - 1, iy + 1);
+  return (data[iy * w + ix] * (1 - fx) + data[iy * w + nx] * fx) * (1 - fy)
+    + (data[ny * w + ix] * (1 - fx) + data[ny * w + nx] * fx) * fy;
+}
+export function sewOntoGarment(garment: HTMLImageElement, stitch: HTMLCanvasElement,
+  W: number, H: number, p: SewPlacement, o: SewOptions): HTMLCanvasElement {
+  const out = canvas(W, H), ctx = out.getContext('2d', { willReadFrequently: true })!;
+  const ratio = (garment.naturalWidth || garment.width) / (garment.naturalHeight || garment.height);
+  let dw = W, dh = W / ratio;
+  if (dh < H) { dh = H; dw = H * ratio; }
+  ctx.fillStyle = '#e9e5de'; ctx.fillRect(0, 0, W, H);
+  ctx.imageSmoothingQuality = 'high'; ctx.drawImage(garment, (W - dw) / 2, (H - dh) / 2, dw, dh);
+  const ew = W * p.scale, eh = ew * stitch.height / stitch.width;
+  if (!(ew > 0 && eh > 0)) return out;
+  const cx = W * p.x / 100, cy = H * p.y / 100, rot = p.rotation * Math.PI / 180;
+  const wrap = Math.max(0, Math.min(1, o.wrap / 100));
+  const shadeStrength = Math.max(0, Math.min(1, o.sewIn / 100));
+  const shadow = Math.max(0, Math.min(1, o.shadow / 100));
+  // Bounded displacement scales with the design, not photo noise or output pixels.
+  const maxWarp = Math.min(ew, eh) * 0.025 * wrap;
+  const shadowRadius = Math.max(1, W / 1400);
+  const padding = Math.ceil(maxWarp + shadowRadius * 3 + 3);
+  const bx = (Math.abs(ew * Math.cos(rot)) + Math.abs(eh * Math.sin(rot))) / 2;
+  const by = (Math.abs(ew * Math.sin(rot)) + Math.abs(eh * Math.cos(rot))) / 2;
+  const x0 = Math.max(0, Math.floor(cx - bx - padding)), y0 = Math.max(0, Math.floor(cy - by - padding));
+  const x1 = Math.min(W, Math.ceil(cx + bx + padding)), y1 = Math.min(H, Math.ceil(cy + by + padding));
+  const bw = x1 - x0, bh = y1 - y0;
+  if (bw <= 0 || bh <= 0) return out;
 
-export function sewOntoGarment(
-  garment: HTMLImageElement,
-  stitch: HTMLCanvasElement,
-  W: number,
-  H: number,
-  p: SewPlacement,
-  o: SewOptions
-): HTMLCanvasElement {
-  const out = document.createElement('canvas');
-  out.width = W; out.height = H;
-  const ctx = out.getContext('2d', { willReadFrequently: true })!;
+  // Canvas high-quality minification integrates the fine threads before warping.
+  // The old four-source-pixel sample aliased badly at small chest-logo sizes.
+  const placed = canvas(bw, bh), pc = placed.getContext('2d', { willReadFrequently: true })!;
+  pc.translate(cx - x0, cy - y0); pc.rotate(rot); pc.imageSmoothingQuality = 'high';
+  pc.drawImage(stitch, -ew / 2, -eh / 2, ew, eh);
+  const pixels = pc.getImageData(0, 0, bw, bh).data;
 
-  // Garment cover-fit
-  const gRatio = garment.width / garment.height;
-  let dw = W, dh = W / gRatio;
-  if (dh < H) { dh = H; dw = H * gRatio; }
-  ctx.fillStyle = '#e9e5de';
-  ctx.fillRect(0, 0, W, H);
-  ctx.drawImage(garment, (W - dw) / 2, (H - dh) / 2, dw, dh);
-
-  const ew = W * p.scale;
-  const eh = ew * (stitch.height / stitch.width);
-  const cx = (p.x / 100) * W, cy = (p.y / 100) * H;
-  const rot = (p.rotation * Math.PI) / 180;
-
-  // ---- TRUE ZERO PATH: all effects off → crisp direct paste, zero resampling loss ----
-  if (o.sewIn <= 0 && o.wrap <= 0) {
-    if (o.shadow > 0) {
-      // tight contact rim: blurred black silhouette UNDER the stitch
-      const sil = document.createElement('canvas');
-      sil.width = Math.max(2, Math.round(ew)); sil.height = Math.max(2, Math.round(eh));
-      const sctx = sil.getContext('2d')!;
-      sctx.drawImage(stitch, 0, 0, sil.width, sil.height);
-      sctx.globalCompositeOperation = 'source-in';
-      sctx.fillStyle = '#000';
-      sctx.fillRect(0, 0, sil.width, sil.height);
-      ctx.save();
-      ctx.translate(cx, cy);
-      ctx.rotate(rot);
-      ctx.globalAlpha = 0.45 * (o.shadow / 100);
-      try { (ctx as CanvasRenderingContext2D & { filter: string }).filter = `blur(${Math.max(2, ew * 0.02)}px)`; } catch { /* noop */ }
-      const off = ew * 0.012;
-      ctx.drawImage(sil, -ew / 2 + off, -eh / 2 + off * 1.4, ew, eh);
-      ctx.restore();
-    }
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(rot);
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(stitch, -ew / 2, -eh / 2, ew, eh);
-    ctx.restore();
-    return out;
+  // Low-resolution, twice-smoothed luminance rejects fabric weave and camera noise.
+  // Same physical fold field at every output size; no per-thread displacement.
+  const fw = 320, fh = Math.max(2, Math.round(320 * H / W));
+  const fc = canvas(fw, fh).getContext('2d', { willReadFrequently: true })!;
+  fc.imageSmoothingQuality = 'high'; fc.drawImage(out, 0, 0, fw, fh);
+  const fp = fc.getImageData(0, 0, fw, fh).data, light = new Float32Array(fw * fh);
+  for (let i = 0; i < light.length; i++) light[i] = fp[i * 4] * 0.299 + fp[i * 4 + 1] * 0.587 + fp[i * 4 + 2] * 0.114;
+  const folds = blur(blur(light, fw, fh, 4), fw, fh, 4);
+  const read = (x: number, y: number) => field(folds, fw, fh, x, y);
+  let ambient = 0, weight = 0;
+  for (let y = 0; y < bh; y += 4) for (let x = 0; x < bw; x += 4) {
+    const a = pixels[(y * bw + x) * 4 + 3] / 255;
+    ambient += read((x + x0 + 0.5) * fw / W - 0.5, (y + y0 + 0.5) * fh / H - 0.5) * a; weight += a;
   }
-
-  // ---- FULL SEW PATH ----
-  const gImg = ctx.getImageData(0, 0, W, H);
-  const g = gImg.data;
-
-  // Luminance field + blurred field (weave vs fold separation)
-  const N = W * H;
-  const L = new Float32Array(N);
-  for (let i = 0; i < N; i++) L[i] = lum(g[i * 4], g[i * 4 + 1], g[i * 4 + 2]);
-  const B = new Float32Array(N);
-  const R = 2;
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      let s = 0, c = 0;
-      for (let dy = -R; dy <= R; dy += 2) {
-        const yy = Math.min(H - 1, Math.max(0, y + dy));
-        for (let dx = -R; dx <= R; dx += 2) {
-          s += L[yy * W + Math.min(W - 1, Math.max(0, x + dx))]; c++;
-        }
-      }
-      B[y * W + x] = s / c;
+  ambient = weight ? ambient / weight : 128;
+  const cover = new Float32Array(bw * bh), rgb = new Float32Array(bw * bh * 3);
+  for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) {
+    const i = y * bw + x;
+    const gx = (x + x0 + 0.5) * fw / W - 0.5, gy = (y + y0 + 0.5) * fh / H - 0.5;
+    const sx = x + maxWarp * Math.tanh((read(gx + 3, gy) - read(gx - 3, gy)) / 32);
+    const sy = y + maxWarp * Math.tanh((read(gx, gy + 3) - read(gx, gy - 3)) / 32);
+    const ix = Math.floor(sx), iy = Math.floor(sy), fx = sx - ix, fy = sy - iy;
+    // Premultiplied interpolation prevents dark fringes beside transparent holes.
+    let a = 0, r = 0, g = 0, b = 0;
+    for (let yy = 0; yy < 2; yy++) for (let xx = 0; xx < 2; xx++) {
+      const px = ix + xx, py = iy + yy;
+      if (px < 0 || py < 0 || px >= bw || py >= bh) continue;
+      const j = (py * bw + px) * 4;
+      const q = (xx ? fx : 1 - fx) * (yy ? fy : 1 - fy) * pixels[j + 3] / 255;
+      a += q; r += pixels[j] * q; g += pixels[j + 1] * q; b += pixels[j + 2] * q;
     }
+    cover[i] = a;
+    // Fold lighting is relative to the design's surroundings; retain thread colour.
+    const shade = 1 + Math.max(-0.3, Math.min(0.2, (read(gx, gy) - ambient) / Math.max(60, ambient))) * shadeStrength;
+    rgb[i * 3] = r * shade; rgb[i * 3 + 1] = g * shade; rgb[i * 3 + 2] = b * shade;
   }
-
-  // Stitch layer pixels
-  const sw = stitch.width, sh = stitch.height;
-  const sctx = document.createElement('canvas');
-  sctx.width = sw; sctx.height = sh;
-  const s2d = sctx.getContext('2d', { willReadFrequently: true })!;
-  s2d.drawImage(stitch, 0, 0);
-  const sData = s2d.getImageData(0, 0, sw, sh).data;
-  const sampleStitch = makeSampler(sData, sw, sh);
-
-  const cos = Math.cos(rot), sin = Math.sin(rot);
-  const sewF = o.sewIn / 100, wrapF = o.wrap / 100;
-
-  // bounding box of rotated rect
-  const hw = ew / 2, hh = eh / 2;
-  const bx = Math.ceil(Math.abs(hw * cos) + Math.abs(hh * sin)) + 8;
-  const by = Math.ceil(Math.abs(hw * sin) + Math.abs(hh * cos)) + 8;
-  const x0 = Math.max(0, Math.floor(cx - bx)), x1 = Math.min(W - 1, Math.ceil(cx + bx));
-  const y0 = Math.max(0, Math.floor(cy - by)), y1 = Math.min(H - 1, Math.ceil(cy + by));
-
-  // ambient light = median luminance under the design footprint
-  const samples: number[] = [];
-  for (let y = y0; y <= y1; y += 4)
-    for (let x = x0; x <= x1; x += 4) {
-      const dx = x - cx, dy = y - cy;
-      const lx = (dx * cos + dy * sin) / ew + 0.5;
-      const ly = (-dx * sin + dy * cos) / eh + 0.5;
-      if (lx >= 0 && lx < 1 && ly >= 0 && ly < 1) samples.push(L[y * W + x]);
-    }
-  samples.sort((a, b) => a - b);
-  const ambient = samples[Math.floor(samples.length * 0.55)] || 128;
-
-  const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
-
-  // first pass: stitch coverage (with wrap displacement; zero wrap = zero bend)
-  const warpMax = 8 * wrapF;
-  const cover = new Float32Array(bw * bh);
-  const sPix = new Float32Array(bw * bh * 4);
-  for (let y = y0; y <= y1; y++) {
-    for (let x = x0; x <= x1; x++) {
-      const li = (y - y0) * bw + (x - x0);
-      const gi = y * W + x;
-      let wx = x, wy = y;
-      if (warpMax > 0) {
-        const rS = 4;
-        const xm0 = Math.max(0, x - rS), xm1 = Math.min(W - 1, x + rS);
-        const ym0 = Math.max(0, y - rS), ym1 = Math.min(H - 1, y + rS);
-        let gx = (B[y * W + xm1] - B[y * W + xm0]) / Math.max(1, xm1 - xm0);
-        let gy = (B[ym1 * W + x] - B[ym0 * W + x]) / Math.max(1, ym1 - ym0);
-        // ignore printed-graphics edges: only smooth shading bends threads
-        const edgeGate = Math.exp(-Math.abs(L[gi] - B[gi]) / 28);
-        gx *= edgeGate; gy *= edgeGate;
-        wx = x + gx * warpMax * 2.2;
-        wy = y + gy * warpMax * 2.2;
-      }
-      const dx = wx - cx, dy = wy - cy;
-      const u = (dx * cos + dy * sin) / ew + 0.5;
-      const v = (-dx * sin + dy * cos) / eh + 0.5;
-      if (u < 0 || u >= 1 || v < 0 || v >= 1) continue;
-      const [r, gg, b, a] = sampleStitch(u, v);
-      if (a < 0.04) continue;
-      cover[li] = a;
-      sPix[li * 4] = r; sPix[li * 4 + 1] = gg; sPix[li * 4 + 2] = b; sPix[li * 4 + 3] = a;
-    }
+  const halo = shadow ? blur(cover, bw, bh, shadowRadius) : cover;
+  const result = ctx.getImageData(x0, y0, bw, bh), dest = result.data;
+  for (let i = 0; i < cover.length; i++) {
+    const a = cover[i], contact = 1 - halo[i] * shadow * 0.3;
+    for (let c = 0; c < 3; c++) dest[i * 4 + c] = Math.min(255 * a, rgb[i * 3 + c]) + dest[i * 4 + c] * contact * (1 - a);
   }
-  // halo = blurred cover (contact shadow zone around AND just inside thread edges)
-  const halo = new Float32Array(bw * bh);
-  const HR = 3;
-  for (let y = 0; y < bh; y++)
-    for (let x = 0; x < bw; x++) {
-      let s = 0, c = 0;
-      for (let dy = -HR; dy <= HR; dy++) {
-        const yy = y + dy; if (yy < 0 || yy >= bh) continue;
-        for (let dx = -HR; dx <= HR; dx++) {
-          const xx = x + dx; if (xx < 0 || xx >= bw) continue;
-          s += cover[yy * bw + xx]; c++;
-        }
-      }
-      halo[y * bw + x] = s / c;
-    }
-
-  // second pass: composite — at sewIn 0 this loop is skipped (handled above),
-  // so shade/weave here always scale cleanly 0 → full with the slider
-  const outImg = ctx.getImageData(0, 0, W, H);
-  const od = outImg.data;
-  for (let y = y0; y <= y1; y++) {
-    for (let x = x0; x <= x1; x++) {
-      const li = (y - y0) * bw + (x - x0);
-      const gi = (y * W + x) * 4;
-      const a = cover[li];
-      const Lhere = L[y * W + x];
-      if (a > 0.01) {
-        const lightRatio = Lhere / Math.max(1, ambient);
-        const clamped = Math.max(0.55, Math.min(1.45, lightRatio));
-        const shade = 1 + (clamped - 1) * sewF;
-        const weave = (Lhere - B[y * W + x]) * 0.35 * sewF;
-        let sr = Math.max(0, Math.min(255, sPix[li * 4] * shade + weave));
-        let sg = Math.max(0, Math.min(255, sPix[li * 4 + 1] * shade + weave));
-        let sb = Math.max(0, Math.min(255, sPix[li * 4 + 2] * shade + weave));
-        // inner contact seating: threads darken slightly right at the cloth edge
-        // so the design rim visibly sits INTO the fabric at any zoom level
-        if (o.shadow > 0 && halo[li] < 0.85) {
-          const rim = (0.85 - halo[li]) * (o.shadow / 100) * 0.55;
-          sr *= 1 - rim; sg *= 1 - rim; sb *= 1 - rim;
-        }
-        const sa = sPix[li * 4 + 3];
-        od[gi] = sr * sa + od[gi] * (1 - sa);
-        od[gi + 1] = sg * sa + od[gi + 1] * (1 - sa);
-        od[gi + 2] = sb * sa + od[gi + 2] * (1 - sa);
-      } else if (halo[li] > 0.01 && o.shadow > 0) {
-        // outer contact darkening hugging the threads — wider + stronger now
-        const k = Math.min(0.6, halo[li] * (o.shadow / 100) * 0.85);
-        od[gi] *= 1 - k; od[gi + 1] *= 1 - k; od[gi + 2] *= 1 - k;
-      }
-    }
-  }
-  ctx.putImageData(outImg, 0, 0);
+  ctx.putImageData(result, x0, y0);
   return out;
 }

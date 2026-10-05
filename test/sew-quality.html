@@ -1,0 +1,39 @@
+<!doctype html><html><body><script type="module">
+import {sewOntoGarment,DEFAULT_SEW} from '/src/engine/sew.ts';
+import {sewOntoGarment as previous} from './previous-sew.ts';
+import {renderStitch} from '/src/engine/stitch.ts';
+import {DEFAULT_STITCH} from '/src/types.ts';
+window.done=(async()=>{
+let checks=0;const check=(v,m)=>{if(!v)throw Error(m);checks++;console.log(m+": pass");};
+const make=(w,h)=>{const c=document.createElement('canvas');c.width=w;c.height=h;return c;};
+const image=async c=>{const im=new Image();im.src=typeof c==='string'?c:c.toDataURL();await im.decode();return im;};
+const art=make(1600,800),ac=art.getContext('2d');ac.fillStyle='#fff';ac.font='bold 650px Arial';ac.fillText('40A',30,635);
+ac.strokeStyle='#083b62';ac.lineWidth=75;ac.lineCap='round';ac.lineJoin='round';
+ac.beginPath();ac.moveTo(850,310);ac.lineTo(700,480);ac.lineTo(550,630);ac.moveTo(700,480);ac.lineTo(855,535);ac.lineTo(825,655);ac.moveTo(850,310);ac.lineTo(760,220);ac.lineTo(670,230);ac.moveTo(850,310);ac.lineTo(945,380);ac.lineTo(1000,270);ac.stroke();ac.beginPath();ac.arc(905,245,55,0,Math.PI*2);ac.fillStyle='#083b62';ac.fill();
+const stitched=renderStitch(art,{...DEFAULT_STITCH,type:'satin',angle:0});
+const flat=make(700,700),fc=flat.getContext('2d');fc.fillStyle='#a0a0a0';fc.fillRect(0,0,700,700);
+const flatImg=await image(flat),p={x:50,y:50,scale:0.13,rotation:0};
+const off={sewIn:0,wrap:0,shadow:0};
+const raw=sewOntoGarment(flatImg,stitched,700,700,p,off);
+const direct=make(700,700),dc=direct.getContext('2d');dc.drawImage(flat,0,0);dc.imageSmoothingQuality='high';dc.drawImage(stitched,304.5,350-91*stitched.height/stitched.width/2,91,91*stitched.height/stitched.width);
+const diff=(a,b)=>{const x=a.getContext('2d').getImageData(0,0,a.width,a.height).data,y=b.getContext('2d').getImageData(0,0,b.width,b.height).data;let sum=0,max=0;for(let i=0;i<x.length;i++){const d=Math.abs(x[i]-y[i]);sum+=d;max=Math.max(d,max);}return {mean:sum/x.length,max};};
+const zeroDiff=diff(raw,direct);check(zeroDiff.max<=1,'Flat placement is not faithful to high-quality resizing');
+check(diff(raw,sewOntoGarment(flatImg,stitched,700,700,p,{sewIn:100,wrap:100,shadow:0})).max<=1,'Flat fabric bends or recolours artwork');
+const noise=make(700,700),nc=noise.getContext('2d'),nd=nc.createImageData(700,700);for(let i=0;i<700*700;i++){const v=150+((i*16807%31)-15);nd.data.set([v,v,v,255],i*4);}nc.putImageData(nd,0,0);
+const noiseImg=await image(noise),noiseDiff=diff(sewOntoGarment(noiseImg,stitched,700,700,p,off),sewOntoGarment(noiseImg,stitched,700,700,p,{...off,wrap:100}));check(noiseDiff.mean<0.05,'Weave noise distorts the artwork');
+const folded=make(700,700),fx=folded.getContext('2d'),fd=fx.createImageData(700,700);for(let y=0;y<700;y++)for(let x=0;x<700;x++){const v=160+65*Math.sin(x/38);fd.data.set([v,v,v,255],(y*700+x)*4);}fx.putImageData(fd,0,0);const foldImg=await image(folded);
+const foldDiff=diff(sewOntoGarment(foldImg,stitched,700,700,{...p,scale:0.5},off),sewOntoGarment(foldImg,stitched,700,700,{...p,scale:0.5},{sewIn:70,wrap:70,shadow:30}));check(foldDiff.mean>0.1,'Fold wrapping and lighting have no effect');
+check(sewOntoGarment(flatImg,stitched,700,700,{...p,x:-200},DEFAULT_SEW).width===700,'Off-canvas placement fails');
+const ring=make(200,200),rc=ring.getContext('2d');rc.fillStyle='rgba(255,255,255,0.5)';rc.fillRect(0,0,200,200);rc.clearRect(70,70,60,60);
+const rotated=sewOntoGarment(flatImg,ring,700,700,{...p,scale:0.3,rotation:33},{...off,wrap:100});
+const pixel=(x,y)=>rotated.getContext('2d').getImageData(x,y,1,1).data;
+check(pixel(350,350)[0]===160,'Rotated transparent letter hole changed');
+check(Math.abs(pixel(350,410)[0]-208)<=1,'Transparent white thread develops a dark fringe');
+const garment=await image('/mockups/sweatshirt_oatmeal_crewneck.png');const place={x:62,y:38,scale:0.13,rotation:0};
+const start=performance.now();const after=sewOntoGarment(garment,stitched,2800,2800,place,DEFAULT_SEW);const renderMs=performance.now()-start;
+check(after.width===2800&&after.height===2800,'Export resolution dropped');
+const before=previous(garment,stitched,1400,1400,place,DEFAULT_SEW);
+const sheet=make(1500,680),s=sheet.getContext('2d');s.fillStyle='#eeeae3';s.fillRect(0,0,1500,680);s.fillStyle='#222';s.font='24px Arial';s.fillText('Before: speckled sampling / 1400px mockup',20,38);s.fillText('After: smooth folds / 2800px mockup',780,38);
+s.drawImage(before,place.x*14-140,place.y*14-100,280,230,15,65,720,590);s.drawImage(after,place.x*28-280,place.y*28-200,560,460,765,65,720,590);document.body.append(sheet);
+return {checks,zeroDiff,noiseDiff,foldDiff,renderMs,image:sheet.toDataURL().split(',')[1],mockup:after.toDataURL().split(',')[1]};
+})();</script></body></html>

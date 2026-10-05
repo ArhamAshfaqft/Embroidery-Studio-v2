@@ -18,7 +18,7 @@ const raw=sewOntoGarment(flatImg,stitched,700,700,p,off);
 const direct=make(700,700),dc=direct.getContext('2d');dc.drawImage(flat,0,0);dc.imageSmoothingQuality='high';dc.drawImage(stitched,304.5,350-91*stitched.height/stitched.width/2,91,91*stitched.height/stitched.width);
 const diff=(a,b)=>{const x=a.getContext('2d').getImageData(0,0,a.width,a.height).data,y=b.getContext('2d').getImageData(0,0,b.width,b.height).data;let sum=0,max=0;for(let i=0;i<x.length;i++){const d=Math.abs(x[i]-y[i]);sum+=d;max=Math.max(d,max);}return {mean:sum/x.length,max};};
 const zeroDiff=diff(raw,direct);check(zeroDiff.max<=1,'Flat placement is not faithful to high-quality resizing');
-check(diff(raw,sewOntoGarment(flatImg,stitched,700,700,p,{sewIn:100,wrap:100,shadow:0})).max<=1,'Flat fabric bends or recolours artwork');
+check(diff(raw,sewOntoGarment(flatImg,stitched,700,700,p,{sewIn:0,wrap:100,shadow:0})).max<=1,'Flat fabric bends artwork');
 const noise=make(700,700),nc=noise.getContext('2d'),nd=nc.createImageData(700,700);for(let i=0;i<700*700;i++){const v=150+((i*16807%31)-15);nd.data.set([v,v,v,255],i*4);}nc.putImageData(nd,0,0);
 const noiseImg=await image(noise),noiseDiff=diff(sewOntoGarment(noiseImg,stitched,700,700,p,off),sewOntoGarment(noiseImg,stitched,700,700,p,{...off,wrap:100}));check(noiseDiff.mean<0.05,'Weave noise distorts the artwork');
 const folded=make(700,700),fx=folded.getContext('2d'),fd=fx.createImageData(700,700);for(let y=0;y<700;y++)for(let x=0;x<700;x++){const v=160+65*Math.sin(x/38);fd.data.set([v,v,v,255],(y*700+x)*4);}fx.putImageData(fd,0,0);const foldImg=await image(folded);
@@ -33,7 +33,16 @@ const garment=await image('/mockups/sweatshirt_oatmeal_crewneck.png');const plac
 const start=performance.now();const after=sewOntoGarment(garment,stitched,2800,2800,place,DEFAULT_SEW);const renderMs=performance.now()-start;
 check(after.width===2800&&after.height===2800,'Export resolution dropped');
 const before=previous(garment,stitched,1400,1400,place,DEFAULT_SEW);
+const sliders=make(1600,430),ss=sliders.getContext('2d');ss.fillStyle='#eeeae3';ss.fillRect(0,0,1600,430);
+const crop=c=>{const d=make(450,350);d.getContext('2d').drawImage(c,place.x*28-225,place.y*28-175,450,350,0,0,450,350);return d;};
+const neutral=crop(sewOntoGarment(garment,stitched,2800,2800,place,off));
+const sliderMetrics={};
+for(const [index,key] of ['off','sewIn','wrap','shadow'].entries()){
+ const c=key==='off'?neutral:crop(sewOntoGarment(garment,stitched,2800,2800,place,{...off,[key]:100}));
+ if(key!=='off'){sliderMetrics[key]=diff(neutral,c);check(sliderMetrics[key].max>=8 && sliderMetrics[key].mean>0.15,`${key} slider has no visible effect on chest logo`);}
+ ss.fillStyle='#222';ss.font='20px Arial';ss.fillText(({off:'All effects off',sewIn:'Fabric shading 100%',wrap:'Wrinkle wrap 100%',shadow:'Contact shadow 100%'})[key],index*400+10,30);ss.drawImage(c,index*400,60,400,311);
+}
 const sheet=make(1500,680),s=sheet.getContext('2d');s.fillStyle='#eeeae3';s.fillRect(0,0,1500,680);s.fillStyle='#222';s.font='24px Arial';s.fillText('Before: speckled sampling / 1400px mockup',20,38);s.fillText('After: smooth folds / 2800px mockup',780,38);
 s.drawImage(before,place.x*14-140,place.y*14-100,280,230,15,65,720,590);s.drawImage(after,place.x*28-280,place.y*28-200,560,460,765,65,720,590);document.body.append(sheet);
-return {checks,zeroDiff,noiseDiff,foldDiff,renderMs,image:sheet.toDataURL().split(',')[1],mockup:after.toDataURL().split(',')[1]};
+return {checks,zeroDiff,noiseDiff,foldDiff,renderMs,sliderMetrics,sliders:sliders.toDataURL().split(',')[1],image:sheet.toDataURL().split(',')[1],mockup:after.toDataURL().split(',')[1]};
 })();</script></body></html>

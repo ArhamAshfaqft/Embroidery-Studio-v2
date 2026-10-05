@@ -51,8 +51,8 @@ export function sewOntoGarment(garment: HTMLImageElement, stitch: HTMLCanvasElem
   const shadeStrength = Math.max(0, Math.min(1, o.sewIn / 100));
   const shadow = Math.max(0, Math.min(1, o.shadow / 100));
   // Bounded displacement scales with the design, not photo noise or output pixels.
-  const maxWarp = Math.min(ew, eh) * 0.025 * wrap;
-  const shadowRadius = Math.max(1, W / 1400);
+  const maxWarp = Math.min(ew, eh) * 0.06 * wrap;
+  const shadowRadius = Math.max(1, W / 700);
   const padding = Math.ceil(maxWarp + shadowRadius * 3 + 3);
   const bx = (Math.abs(ew * Math.cos(rot)) + Math.abs(eh * Math.sin(rot))) / 2;
   const by = (Math.abs(ew * Math.sin(rot)) + Math.abs(eh * Math.cos(rot))) / 2;
@@ -75,7 +75,7 @@ export function sewOntoGarment(garment: HTMLImageElement, stitch: HTMLCanvasElem
   fc.imageSmoothingQuality = 'high'; fc.drawImage(out, 0, 0, fw, fh);
   const fp = fc.getImageData(0, 0, fw, fh).data, light = new Float32Array(fw * fh);
   for (let i = 0; i < light.length; i++) light[i] = fp[i * 4] * 0.299 + fp[i * 4 + 1] * 0.587 + fp[i * 4 + 2] * 0.114;
-  const folds = blur(blur(light, fw, fh, 4), fw, fh, 4);
+  const folds = blur(blur(light, fw, fh, 2), fw, fh, 2);
   const read = (x: number, y: number) => field(folds, fw, fh, x, y);
   let ambient = 0, weight = 0;
   for (let y = 0; y < bh; y += 4) for (let x = 0; x < bw; x += 4) {
@@ -87,8 +87,8 @@ export function sewOntoGarment(garment: HTMLImageElement, stitch: HTMLCanvasElem
   for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) {
     const i = y * bw + x;
     const gx = (x + x0 + 0.5) * fw / W - 0.5, gy = (y + y0 + 0.5) * fh / H - 0.5;
-    const sx = x + maxWarp * Math.tanh((read(gx + 3, gy) - read(gx - 3, gy)) / 32);
-    const sy = y + maxWarp * Math.tanh((read(gx, gy + 3) - read(gx, gy - 3)) / 32);
+    const sx = x + maxWarp * Math.tanh((read(gx + 3, gy) - read(gx - 3, gy)) / 12);
+    const sy = y + maxWarp * Math.tanh((read(gx, gy + 3) - read(gx, gy - 3)) / 12);
     const ix = Math.floor(sx), iy = Math.floor(sy), fx = sx - ix, fy = sy - iy;
     // Premultiplied interpolation prevents dark fringes beside transparent holes.
     let a = 0, r = 0, g = 0, b = 0;
@@ -100,15 +100,20 @@ export function sewOntoGarment(garment: HTMLImageElement, stitch: HTMLCanvasElem
       a += q; r += pixels[j] * q; g += pixels[j + 1] * q; b += pixels[j + 2] * q;
     }
     cover[i] = a;
-    // Fold lighting is relative to the design's surroundings; retain thread colour.
-    const shade = 1 + Math.max(-0.3, Math.min(0.2, (read(gx, gy) - ambient) / Math.max(60, ambient))) * shadeStrength;
+    // Local contrast models folds; a restrained exposure term also seats bright
+    // thread on evenly lit cloth, where local-mean normalization cancelled it out.
+    const illumination = read(gx, gy);
+    const exposure = -0.35 * (1 - illumination / 255);
+    const shade = 1 + Math.max(-0.55, Math.min(0.35, exposure + 4 * (illumination - ambient) / Math.max(60, ambient))) * shadeStrength;
     rgb[i * 3] = r * shade; rgb[i * 3 + 1] = g * shade; rgb[i * 3 + 2] = b * shade;
   }
   const halo = shadow ? blur(cover, bw, bh, shadowRadius) : cover;
   const result = ctx.getImageData(x0, y0, bw, bh), dest = result.data;
   for (let i = 0; i < cover.length; i++) {
-    const a = cover[i], contact = 1 - halo[i] * shadow * 0.3;
-    for (let c = 0; c < 3; c++) dest[i * 4 + c] = Math.min(255 * a, rgb[i * 3 + c]) + dest[i * 4 + c] * contact * (1 - a);
+    const a = cover[i], contact = 1 - halo[i] * shadow * 0.7;
+    // Seat the inner edge too: an outer-only shadow disappeared under opaque ink.
+    const rim = 1 - Math.max(0, a - halo[i]) * shadow * 0.35;
+    for (let c = 0; c < 3; c++) dest[i * 4 + c] = Math.min(255 * a, rgb[i * 3 + c]) * rim + dest[i * 4 + c] * contact * (1 - a);
   }
   ctx.putImageData(result, x0, y0);
   return out;

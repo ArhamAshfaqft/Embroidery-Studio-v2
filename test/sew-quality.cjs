@@ -9,6 +9,7 @@ app.whenReady().then(async()=>{
  const r=await win.webContents.executeJavaScript('window.done');
  fs.writeFileSync('demo-assets/mockup-quality-comparison.png',Buffer.from(r.image,'base64'));
  fs.writeFileSync('demo-assets/mockup-quality.png',Buffer.from(r.mockup,'base64'));
- delete r.image;delete r.mockup;console.log(JSON.stringify(r));clearTimeout(timer);app.exit(0);
+ fs.writeFileSync('demo-assets/mockup-sliders.png',Buffer.from(r.sliders,'base64'));
+ delete r.image;delete r.mockup;delete r.sliders;console.log(JSON.stringify(r));clearTimeout(timer);app.exit(0);
  }catch(e){console.error(e);clearTimeout(timer);app.exit(1);}
 });
